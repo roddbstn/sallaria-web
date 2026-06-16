@@ -1,26 +1,60 @@
 @import "tailwindcss";
 
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --green: #017333;
+  --green-soft: #E6F4EC;
+  --ink: #1E1E1E;
+  --gray-text: #727272;
+  --gray-border: #D7D7D7;
+  --gray-bg: #FAFAFA;
+  --gray-50: #F5F5F5;
+  --danger: #C92A2A;
+  --shadow-lg: 0 -4px 20px rgba(0,0,0,0.08);
 }
 
 @theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+  --color-green: #017333;
+  --color-green-soft: #E6F4EC;
+  --color-ink: #1E1E1E;
+  --color-gray-text: #727272;
+  --color-gray-border: #D7D7D7;
+  --color-gray-bg: #FAFAFA;
+  --color-gray-50: #F5F5F5;
+  --color-danger: #C92A2A;
 }
 
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  font-family: -apple-system, "Apple SD Gothic Neo", "Malgun Gothic", "맑은 고딕", sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+button {
+  font-family: inherit;
+}
+
+button:active {
+  transform: scale(0.96);
+}
+
+@keyframes shake {
+  0%, 100% { transform: translateX(0); }
+  20% { transform: translateX(-8px); }
+  40% { transform: translateX(8px); }
+  60% { transform: translateX(-6px); }
+  80% { transform: translateX(6px); }
+}
+
+.shake {
+  animation: shake 0.35s ease-out;
+}
+
+/* 모바일 우선, max-width 430px */
+.screen {
+  max-width: 430px;
+  margin: 0 auto;
+  min-height: 100dvh;
+  display: flex;
+  flex-direction: column;
+  background: #fff;
+  position: relative;
 }
