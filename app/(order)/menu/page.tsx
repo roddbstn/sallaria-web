@@ -255,13 +255,13 @@ export default function MenuPage() {
 
           <div className="mt-3 mb-4 bg-[#F5F5F5] rounded-xl px-4 py-3 flex items-center justify-between">
             <span className="text-[13px] text-[#727272]">
-              <span className="font-semibold text-[#1E1E1E]">{account.name}</span>
+              <span className="text-[15px] font-semibold text-[#1E1E1E]">{account.name}</span>
               {orderer && <span className="ml-1 text-[#727272]">· {orderer}</span>}
             </span>
             <div className="text-right">
-              <div className="text-[11px] text-[#727272]">선결제 잔액</div>
+              <div className="text-[13px] text-[#727272]">선결제 잔액</div>
               <div className={[
-                'text-[14px] font-bold',
+                'text-[16px] font-bold',
                 account.balance < 30000 ? 'text-[#C92A2A]' : 'text-[#017333]',
               ].join(' ')}>
                 {formatWon(account.balance)}
@@ -271,7 +271,7 @@ export default function MenuPage() {
         </div>
 
         {/* 카테고리 탭 (sticky — 내부 컨테이너 기준으로 동작) */}
-        <div className="sticky top-0 z-10 bg-white border-b border-[#F0F0F0]">
+        <div className="sticky top-0 z-10 bg-white">
           <div className="flex items-center">
             <div
               ref={tabsRef}
@@ -283,7 +283,7 @@ export default function MenuPage() {
                   key={cat.id}
                   onClick={() => scrollToCategory(cat.id)}
                   className={[
-                    'flex-shrink-0 px-[14px] py-[7px] text-[13px] font-semibold transition-colors',
+                    'flex-shrink-0 px-[20px] py-[10px] text-[15px] font-semibold transition-colors',
                     'rounded-[27.5px]',
                     activeCategory === cat.id
                       ? 'bg-[#1E1E1E] text-white'
@@ -296,33 +296,18 @@ export default function MenuPage() {
             </div>
             <button
               onClick={() => setShowDropdown(v => !v)}
-              className="flex-shrink-0 w-8 h-8 mr-4 bg-[#FAFAFA] border border-[#D7D7D7] rounded-full flex items-center justify-center text-[#727272] text-[11px]"
+              className="flex-shrink-0 w-8 h-8 mr-4 bg-[#FAFAFA] border border-[#D7D7D7] rounded-full flex items-center justify-center text-[#727272]"
               aria-label="전체 카테고리"
             >
-              {showDropdown ? '▲' : '▼'}
+              <span
+                className="text-[14px] font-bold inline-block transition-transform duration-200"
+                style={{ transform: showDropdown ? 'rotate(-90deg)' : 'rotate(90deg)' }}
+              >
+                ›
+              </span>
             </button>
           </div>
 
-          {showDropdown && (
-            <div className="bg-white border-b border-[#F0F0F0] px-5 pb-4 pt-2">
-              <div className="grid grid-cols-4 gap-2">
-                {categories.map(cat => (
-                  <button
-                    key={cat.id}
-                    onClick={() => scrollToCategory(cat.id)}
-                    className={[
-                      'py-2 px-1 text-[12px] font-semibold rounded-lg transition-colors',
-                      activeCategory === cat.id
-                        ? 'bg-[#1E1E1E] text-white'
-                        : 'bg-[#FAFAFA] text-[#727272]',
-                    ].join(' ')}
-                  >
-                    {cat.name}
-                  </button>
-                ))}
-              </div>
-            </div>
-          )}
         </div>
 
         {/* 메뉴 목록 */}
@@ -367,6 +352,37 @@ export default function MenuPage() {
         >
           ↑
         </button>
+      )}
+
+      {/* 카테고리 모달 */}
+      {showDropdown && (
+        <div
+          className="fixed inset-0 z-30 flex items-center justify-center bg-black/50"
+          onClick={() => setShowDropdown(false)}
+        >
+          <div
+            className="bg-white rounded-2xl w-[300px] px-5 py-6 mx-4"
+            onClick={e => e.stopPropagation()}
+          >
+            <p className="text-[13px] font-bold text-[#1E1E1E] mb-4 text-center">카테고리</p>
+            <div className="grid grid-cols-3 gap-2">
+              {categories.map(cat => (
+                <button
+                  key={cat.id}
+                  onClick={() => scrollToCategory(cat.id)}
+                  className={[
+                    'py-2.5 px-1 text-[12px] font-semibold rounded-xl transition-colors',
+                    activeCategory === cat.id
+                      ? 'bg-[#1E1E1E] text-white'
+                      : 'bg-[#F5F5F5] text-[#727272]',
+                  ].join(' ')}
+                >
+                  {cat.name}
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
       )}
 
       {/* 장바구니 바 */}

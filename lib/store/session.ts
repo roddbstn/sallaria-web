@@ -10,9 +10,11 @@ interface SessionState {
   phone: string
   pinAttempts: number
   pinLocked: boolean
+  loginAt: number | null   // PIN 인증 성공 시각 (ms)
   setAccount: (account: Account) => void
   setOrderer: (name: string) => void
   setPhone: (phone: string) => void
+  setLoginAt: (t: number) => void
   incrementPinAttempts: () => void
   lockPin: () => void
   resetSession: () => void
@@ -28,10 +30,12 @@ export const useSessionStore = create<SessionState>()(
       phone: '',
       pinAttempts: 0,
       pinLocked: false,
+      loginAt: null,
 
       setAccount: (account) => set({ account }),
       setOrderer: (orderer) => set({ orderer }),
       setPhone: (phone) => set({ phone }),
+      setLoginAt: (t) => set({ loginAt: t }),
 
       incrementPinAttempts: () => {
         const attempts = get().pinAttempts + 1
@@ -40,9 +44,9 @@ export const useSessionStore = create<SessionState>()(
 
       lockPin: () => set({ pinLocked: true }),
 
-      resetSession: () => set({ account: null, orderer: '', phone: '', pinAttempts: 0, pinLocked: false }),
+      resetSession: () => set({ account: null, orderer: '', phone: '', pinAttempts: 0, pinLocked: false, loginAt: null }),
 
-      clearSession: () => set({ account: null, orderer: '', phone: '', pinAttempts: 0, pinLocked: false }),
+      clearSession: () => set({ account: null, orderer: '', phone: '', pinAttempts: 0, pinLocked: false, loginAt: null }),
     }),
     {
       name: 'sallaria-session',

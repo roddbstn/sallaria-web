@@ -91,6 +91,7 @@ export default function CheckoutPage() {
       sessionStorage.setItem('last_order_phone', finalPhone)
       sessionStorage.setItem('last_order_account', account!.name)
       sessionStorage.setItem('last_order_items', JSON.stringify(items))
+      sessionStorage.setItem('last_order_balance_after', String(afterBalance))
       clearCart()
       router.push('/success')
     }
@@ -308,7 +309,7 @@ export default function CheckoutPage() {
               <span>{formatWon(currentBalance)}</span>
             </div>
             <div className="flex justify-between font-semibold">
-              <span className="text-[#727272]">주문 후 예상 잔액</span>
+              <span className="text-[#727272]">주문 후 잔액</span>
               <span className={isNegative ? 'text-[#C92A2A]' : 'text-[#017333]'}>
                 {formatWon(afterBalance)}
               </span>

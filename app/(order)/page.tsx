@@ -28,7 +28,7 @@ export default function HomePage() {
 function HomePageInner() {
   const router = useRouter()
   const searchParams = useSearchParams()
-  const { setAccount, pinAttempts, pinLocked, incrementPinAttempts, lockPin, resetSession } = useSessionStore()
+  const { setAccount, setLoginAt, pinAttempts, pinLocked, incrementPinAttempts, lockPin, resetSession } = useSessionStore()
   const clearCart = useCartStore(s => s.clearCart)
 
   const [pin, setPin] = useState('')
@@ -135,6 +135,7 @@ function HomePageInner() {
         storeName,
       }
       setAccount(account)
+      setLoginAt(Date.now())
       setPinError('')
       setTimeout(() => router.push('/menu'), 120)
     } finally {
@@ -190,9 +191,15 @@ function HomePageInner() {
 
       <div className="text-center px-8 mb-10">
         <h1 className="text-[20px] font-bold text-[#1E1E1E] mb-2">선결제 비밀번호를 입력해 주세요</h1>
-        <p className="text-[13px] text-[#727272] leading-relaxed">
-          거래처에 전달받은 4자리 숫자를 아래에 입력해 주세요.
-        </p>
+        {searchParams.get('expired') === '1' ? (
+          <p className="text-[13px] text-[#C92A2A] font-semibold leading-relaxed">
+            주문 시간(5분)이 만료되었습니다.<br />비밀번호를 다시 입력해 주세요.
+          </p>
+        ) : (
+          <p className="text-[13px] text-[#727272] leading-relaxed">
+            거래처에 전달받은 4자리 숫자를 아래에 입력해 주세요.
+          </p>
+        )}
       </div>
 
       <div className={`flex justify-center gap-4 mb-4 ${isShaking ? 'shake' : ''}`}>

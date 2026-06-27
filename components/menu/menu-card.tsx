@@ -18,7 +18,7 @@ export default function MenuCard({ menu, onClick }: MenuCardProps) {
         if (!isSoldOut && (e.key === 'Enter' || e.key === ' ')) onClick()
       }}
       className={[
-        'flex flex-row-reverse gap-[14px] py-[14px] border-b border-[#F0F0F0] cursor-pointer',
+        'flex flex-row-reverse gap-[14px] py-[14px] cursor-pointer',
         isSoldOut ? 'pointer-events-none opacity-50' : '',
       ].join(' ')}
     >

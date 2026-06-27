@@ -27,6 +27,7 @@ export default function SuccessPage() {
   const [orderOrderer,     setOrderOrderer]      = useState<string>('')
   const [orderPhone,       setOrderPhone]        = useState<string>('')
   const [orderAccount,     setOrderAccount]      = useState<string>('')
+  const [orderBalanceAfter, setOrderBalanceAfter] = useState<number | null>(null)
   const [rejectedReason,   setRejectedReason]    = useState<string>('')
   const [showReview,       setShowReview]        = useState(false)
 
@@ -34,6 +35,7 @@ export default function SuccessPage() {
   const [totalSeconds,  setTotalSeconds]  = useState<number | null>(null)
   const [acceptedAt,    setAcceptedAt]    = useState<number | null>(null)
   const [secondsLeft,   setSecondsLeft]   = useState<number | null>(null)
+  const [posCompleted,  setPosCompleted]  = useState(false)
 
   // 주문 아이템
   const [savedItems,   setSavedItems]   = useState<CartItem[]>([])
@@ -77,6 +79,8 @@ export default function SuccessPage() {
 
     if (!code) { router.replace('/'); return }
 
+    const balanceAfterRaw = sessionStorage.getItem('last_order_balance_after')
+
     setOrderCode(code)
     setOrderNumber(num)
     setOrderMethod(method)
@@ -84,6 +88,7 @@ export default function SuccessPage() {
     setOrderOrderer(orderer)
     setOrderPhone(phone)
     setOrderAccount(acct)
+    if (balanceAfterRaw !== null) setOrderBalanceAfter(Number(balanceAfterRaw))
 
     if (code.startsWith('MOCK-')) {
       setStatus('accepted')
@@ -93,8 +98,58 @@ export default function SuccessPage() {
       return
     }
 
+    // ── 새로고침 복원: 이전에 저장된 acceptedAt / totalSeconds 확인 ──
+    const savedAcceptedAt   = sessionStorage.getItem('last_order_accepted_at')
+    const savedTotalSeconds = sessionStorage.getItem('last_order_total_seconds')
+    const savedRejected     = sessionStorage.getItem('last_order_rejected')
+    const savedRejReason    = sessionStorage.getItem('last_order_rej_reason')
+
+    if (savedRejected === '1') {
+      setStatus('rejected')
+      setRejectedReason(savedRejReason ?? '점주가 주문을 거부했습니다.')
+      return
+    }
+
+    if (savedAcceptedAt) {
+      const at   = Number(savedAcceptedAt)
+      const secs = savedTotalSeconds ? Number(savedTotalSeconds) : null
+      setStatus('accepted')
+      setAcceptedAt(at)
+      if (secs) {
+        setTotalSeconds(secs)
+        setSecondsLeft(Math.max(0, secs - Math.floor((Date.now() - at) / 1000)))
+      }
+    }
+
+    // ── 현재 DB 상태 즉시 조회 (새로고침 시 놓친 이벤트 복구) ──
+    const supabase = getSupabaseClient()
+    supabase
+      .from('orders')
+      .select('status, note')
+      .eq('order_code', code)
+      .maybeSingle()
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      .then(({ data }: { data: any }) => {
+        if (!data) return
+        if (data.status === '조리중' || data.status === '완료') {
+          setStatus('accepted')
+          setAcceptedAt(prev => {
+            if (prev) return prev
+            const now = Date.now()
+            sessionStorage.setItem('last_order_accepted_at', String(now))
+            return now
+          })
+          if (data.status === '완료') setPosCompleted(true)
+        } else if (data.status === '취소') {
+          const reason = data.note ?? '점주가 주문을 거부했습니다.'
+          setStatus('rejected')
+          setRejectedReason(reason)
+          sessionStorage.setItem('last_order_rejected', '1')
+          sessionStorage.setItem('last_order_rej_reason', reason)
+        }
+      })
+
     try {
-      const supabase = getSupabaseClient()
       const channel = supabase
         .channel(`orders:order_code=${code}`)
         .on(
@@ -103,29 +158,55 @@ export default function SuccessPage() {
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
           (payload: any) => {
             const s = payload.new?.status
-            if (s === '조리중' || s === '완료') {
+            if (s === '조리중') {
+              const now = Date.now()
               setStatus('accepted')
-              setAcceptedAt(Date.now())
+              setAcceptedAt(prev => {
+                if (prev) return prev
+                sessionStorage.setItem('last_order_accepted_at', String(now))
+                return now
+              })
+            } else if (s === '완료') {
+              setStatus('accepted')
+              setAcceptedAt(prev => {
+                if (prev) return prev
+                const now = Date.now()
+                sessionStorage.setItem('last_order_accepted_at', String(now))
+                return now
+              })
+              setPosCompleted(true)
             } else if (s === '취소') {
+              const reason = payload.new?.note ?? '점주가 주문을 거부했습니다.'
               setStatus('rejected')
-              setRejectedReason(payload.new?.note ?? '점주가 주문을 거부했습니다.')
+              setRejectedReason(reason)
+              sessionStorage.setItem('last_order_rejected', '1')
+              sessionStorage.setItem('last_order_rej_reason', reason)
             }
           }
         )
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         .on('broadcast', { event: 'ORDER_ACCEPTED' }, ({ payload }: { payload: any }) => {
-          setStatus('accepted')
-          setAcceptedAt(Date.now())
+          const now  = Date.now()
           const mins = payload?.estimated_minutes ?? null
+          setStatus('accepted')
+          setAcceptedAt(prev => {
+            if (prev) return prev
+            sessionStorage.setItem('last_order_accepted_at', String(now))
+            return now
+          })
           if (mins && mins > 0) {
             setTotalSeconds(mins * 60)
             setSecondsLeft(mins * 60)
+            sessionStorage.setItem('last_order_total_seconds', String(mins * 60))
           }
         })
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         .on('broadcast', { event: 'ORDER_REJECTED' }, ({ payload }: { payload: any }) => {
+          const reason = payload?.reason ?? '점주가 주문을 거부했습니다.'
           setStatus('rejected')
-          setRejectedReason(payload?.reason ?? '점주가 주문을 거부했습니다.')
+          setRejectedReason(reason)
+          sessionStorage.setItem('last_order_rejected', '1')
+          sessionStorage.setItem('last_order_rej_reason', reason)
         })
         .subscribe()
 
@@ -133,14 +214,15 @@ export default function SuccessPage() {
     } catch (err) {
       console.error('[success] Realtime 연결 오류:', err)
       setTimeout(() => {
+        const now = Date.now()
         setStatus('accepted')
-        setAcceptedAt(Date.now())
+        setAcceptedAt(now)
+        sessionStorage.setItem('last_order_accepted_at', String(now))
       }, 10_000)
     }
 
     return () => {
       try {
-        const supabase = getSupabaseClient()
         if (channelRef.current) supabase.removeChannel(channelRef.current)
       } catch { /* ignore */ }
     }
@@ -201,9 +283,11 @@ export default function SuccessPage() {
   }
 
   // ── Accepted ──────────────────────────────────────────────────────────
-  const hasTimer   = totalSeconds !== null && secondsLeft !== null
-  const progress   = hasTimer ? Math.min(1, 1 - secondsLeft! / totalSeconds!) : 0
-  const isDone     = hasTimer && secondsLeft === 0
+  const hasTimer = totalSeconds !== null && secondsLeft !== null
+  const progress = hasTimer ? Math.min(1, 1 - secondsLeft! / totalSeconds!) : 0
+  const timerDone = hasTimer && secondsLeft === 0
+  const isReady = posCompleted || timerDone
+  const isDelivery = orderMethod === '배달'
 
   return (
     <div className="screen" style={{ paddingBottom: showReview ? '80px' : '0' }}>
@@ -211,29 +295,33 @@ export default function SuccessPage() {
 
         {/* 타이틀 */}
         <div className="flex items-center justify-between">
-          <p className="text-xl font-bold text-[#1E1E1E]">주문이 접수됐어요!</p>
-          <div className="w-9 h-9 rounded-full bg-[#017333] flex items-center justify-center flex-shrink-0">
-            <span className="text-white text-lg font-bold leading-none">✓</span>
+          <div>
+            <p className="text-xl font-bold text-[#1E1E1E]">
+              {isReady
+                ? (isDelivery ? '배달기사가 곧 도착해요!' : '메뉴가 준비됐어요!')
+                : '주문이 접수됐어요!'}
+            </p>
+            {isReady && !isDelivery && (
+              <p className="text-sm text-[#017333] font-semibold mt-0.5">매장에서 받아가세요</p>
+            )}
+          </div>
+          <div className={[
+            'w-9 h-9 rounded-full flex items-center justify-center flex-shrink-0',
+            isReady ? 'bg-[#017333]' : 'bg-[#017333]',
+          ].join(' ')}>
+            <span className="text-white text-lg font-bold leading-none">
+              {isReady ? (isDelivery ? '🛵' : '🎉') : '✓'}
+            </span>
           </div>
         </div>
 
-        {/* 타이머 */}
-        {hasTimer && (
+        {/* 타이머 (준비 전에만) */}
+        {hasTimer && !isReady && (
           <div className="bg-[#F5F5F5] rounded-2xl px-5 py-4">
-            <p className="text-[11px] font-semibold text-[#727272] mb-1">
-              {isDone ? '조리가 완료됐어요!' : '예상 대기시간'}
+            <p className="text-[11px] font-semibold text-[#727272] mb-1">예상 대기시간</p>
+            <p className="text-[36px] font-extrabold text-[#1E1E1E] leading-none mb-3 tabular-nums">
+              {formatTime(secondsLeft!)}
             </p>
-            {!isDone && (
-              <p className="text-[36px] font-extrabold text-[#1E1E1E] leading-none mb-3 tabular-nums">
-                {formatTime(secondsLeft!)}
-              </p>
-            )}
-            {isDone && (
-              <p className="text-[22px] font-extrabold text-[#017333] leading-none mb-3">
-                픽업해 주세요 🎉
-              </p>
-            )}
-            {/* 프로그레스 바 */}
             <div className="h-2 bg-[#D7D7D7] rounded-full overflow-hidden">
               <div
                 className="h-full bg-[#017333] rounded-full transition-all duration-1000 ease-linear"
@@ -274,13 +362,23 @@ export default function SuccessPage() {
           {orderMethod && (
             <div className="flex justify-between">
               <span className="text-[#727272]">이용방법</span>
-              <span className="font-semibold text-[#1E1E1E]">{orderMethod}</span>
+              <span className="font-semibold text-[#1E1E1E]">
+                {orderMethod}{orderMethod === '배달' ? ' (+3,500원)' : ''}
+              </span>
             </div>
           )}
           {orderTotal > 0 && (
             <div className="flex justify-between pt-2 border-t border-[#F0F0F0]">
               <span className="text-[#727272] font-semibold">결제 금액</span>
               <span className="font-bold text-[#1E1E1E]">{formatWon(orderTotal)}</span>
+            </div>
+          )}
+          {orderBalanceAfter !== null && (
+            <div className="flex justify-between">
+              <span className="text-[#727272] font-semibold">주문 후 잔액</span>
+              <span className={`font-bold ${orderBalanceAfter < 0 ? 'text-[#C92A2A]' : 'text-[#017333]'}`}>
+                {formatWon(orderBalanceAfter)}
+              </span>
             </div>
           )}
         </div>
@@ -298,7 +396,7 @@ export default function SuccessPage() {
         {/* 주문 메뉴 목록 */}
         {savedItems.length > 0 && (
           <div>
-            <p className="text-[13px] font-bold text-[#1E1E1E] mb-2">주문 메뉴</p>
+            <p className="text-[15px] font-bold text-[#1E1E1E] mb-2">주문 메뉴</p>
             <div className="space-y-3">
               {savedItems.map((item, idx) => {
                 const imgUrl = menuImages[item.menuCode]
@@ -327,7 +425,7 @@ export default function SuccessPage() {
                           {item.menuName}
                           <span className="text-[#727272] font-normal ml-1">×{item.qty}</span>
                         </p>
-                        <p className="text-[13px] font-bold text-[#1E1E1E] flex-shrink-0">
+                        <p className="text-[15px] font-bold text-[#1E1E1E] flex-shrink-0">
                           {formatWon(item.subtotal)}
                         </p>
                       </div>
