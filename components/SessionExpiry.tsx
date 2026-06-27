@@ -6,8 +6,8 @@ import { useSessionStore } from '@/lib/store/session'
 
 const SESSION_MS = 5 * 60 * 1000  // 5분
 
-// /success 경로는 만료 체크에서 제외
-const EXEMPT_PATHS = ['/success']
+// 주문 흐름 중에는 만료 체크 제외
+const EXEMPT_PATHS = ['/cart', '/checkout', '/success']
 
 export default function SessionExpiry() {
   const router   = useRouter()
