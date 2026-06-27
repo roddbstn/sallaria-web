@@ -22,9 +22,12 @@ export default function CartItemComponent({
 
   return (
     <div className="flex gap-3 py-3 border-b border-[#F0F0F0]">
-      {/* 이모지 썸네일 */}
-      <div className="w-11 h-11 rounded-xl bg-[#F5F5F5] flex items-center justify-center text-2xl flex-shrink-0">
-        🍽️
+      {/* 썸네일 */}
+      <div className="w-11 h-11 rounded-xl bg-[#F5F5F5] overflow-hidden flex items-center justify-center text-2xl flex-shrink-0">
+        {item.imageUrl
+          ? <img src={item.imageUrl} alt={item.menuName} className="w-full h-full object-cover" />
+          : '🍽️'
+        }
       </div>
 
       {/* 메뉴 정보 */}

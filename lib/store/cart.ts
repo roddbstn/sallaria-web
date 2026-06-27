@@ -15,7 +15,8 @@ interface CartState {
     menuName: string,
     basePrice: number,
     qty: number,
-    selectedOptions: SelectedOption[]
+    selectedOptions: SelectedOption[],
+    imageUrl?: string
   ) => void
   updateItem: (cartId: string, qty: number, selectedOptions: SelectedOption[]) => void
   removeItem: (cartId: string) => void
@@ -37,11 +38,12 @@ export const useCartStore = create<CartState>()(
       method: null,
       remarks: '',
 
-      addItem: (menuCode, menuName, basePrice, qty, selectedOptions) => {
+      addItem: (menuCode, menuName, basePrice, qty, selectedOptions, imageUrl) => {
         const item: CartItem = {
           cartId: generateCartId(),
           menuCode,
           menuName,
+          imageUrl,
           basePrice,
           qty,
           selectedOptions,

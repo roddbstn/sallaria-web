@@ -1,7 +1,8 @@
 import { createClient } from '@supabase/supabase-js'
 
-// singleton 인스턴스
-let client: ReturnType<typeof createClient> | null = null
+// singleton 인스턴스 (DB 스키마 타입 없이 any로 사용)
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+let client: any = null
 
 export function getSupabaseClient() {
   if (client) return client

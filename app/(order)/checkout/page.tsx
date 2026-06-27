@@ -90,6 +90,7 @@ export default function CheckoutPage() {
       sessionStorage.setItem('last_order_orderer', finalOrderer)
       sessionStorage.setItem('last_order_phone', finalPhone)
       sessionStorage.setItem('last_order_account', account!.name)
+      sessionStorage.setItem('last_order_items', JSON.stringify(items))
       clearCart()
       router.push('/success')
     }
@@ -108,7 +109,8 @@ export default function CheckoutPage() {
 
       // Supabase RPC 직접 호출 (static export 환경)
       const supabase = getSupabaseClient()
-      const { data, error: rpcError } = await supabase.rpc('create_order', {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const { data, error: rpcError } = await (supabase as any).rpc('create_order', {
         p_account_code: account.code,
         p_orderer_name: finalOrderer,
         p_method:       method,

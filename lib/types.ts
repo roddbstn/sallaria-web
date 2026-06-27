@@ -64,6 +64,7 @@ export interface CartItem {
   cartId: string         // 장바구니 내 고유 ID
   menuCode: string
   menuName: string
+  imageUrl?: string
   basePrice: number
   qty: number
   selectedOptions: SelectedOption[]

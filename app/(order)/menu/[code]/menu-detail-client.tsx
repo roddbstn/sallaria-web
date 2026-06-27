@@ -159,7 +159,7 @@ export default function MenuDetailClient({ code }: { code: string }) {
       return
     }
 
-    addItem(menu.code, menu.name, menu.price, qty, selectedOptions)
+    addItem(menu.code, menu.name, menu.price, qty, selectedOptions, menu.imageUrl)
     router.push('/menu')
   }
 

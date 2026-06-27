@@ -377,7 +377,7 @@ export default function MenuPage() {
         >
           <button
             onClick={() => router.push('/cart')}
-            className="w-full py-[16px] bg-[#017333] text-white rounded-xl font-bold text-[15px] flex items-center justify-between px-5"
+            className="w-full py-[16px] bg-[#1E1E1E] text-white rounded-xl font-bold text-[15px] flex items-center justify-between px-5"
           >
             <span className="bg-white/20 rounded-lg px-2 py-0.5 text-[13px]">{qty}개</span>
             <span>장바구니 보기</span>
