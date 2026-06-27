@@ -125,6 +125,7 @@ export default function MenuPage() {
       let catQuery = supabase
         .from('categories')
         .select('id, name, display_order')
+        .eq('is_active', true)
         .order('display_order', { ascending: true })
       if (account?.storeId) catQuery = catQuery.eq('store_id', account.storeId)
       const { data: catData } = await catQuery
@@ -283,7 +284,7 @@ export default function MenuPage() {
                   key={cat.id}
                   onClick={() => scrollToCategory(cat.id)}
                   className={[
-                    'flex-shrink-0 px-[20px] py-[10px] text-[15px] font-semibold transition-colors',
+                    'flex-shrink-0 px-[18px] py-[9px] text-[14px] font-semibold transition-colors',
                     'rounded-[27.5px]',
                     activeCategory === cat.id
                       ? 'bg-[#1E1E1E] text-white'
