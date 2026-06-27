@@ -232,7 +232,7 @@ export default function CheckoutPage() {
           <h2 className="text-sm font-bold text-[#1E1E1E] mb-2">가게 요청사항</h2>
           {/* 퀵 선택 버튼 */}
           <div className="flex flex-wrap gap-2 mb-2">
-            {['수저·포크 O', '수저·포크 X', '소스 따로', '덜 맵게'].map((label) => {
+            {['수저·포크 O', '수저·포크 X', '소스 따로', '덜 맵게', '견과류 제외'].map((label) => {
               const active = remarks.includes(label)
               return (
                 <button
