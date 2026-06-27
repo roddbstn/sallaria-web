@@ -1,11 +1,11 @@
 import type { Account, Category, Menu } from './types'
 
 export const ACCOUNTS: Account[] = [
-  { code: 'A001', name: '북구청 공원녹지과', type: '구청 과', org: '북구청', balance: 223400, pin: '1234' },
-  { code: 'A002', name: '북구청 건설과', type: '구청 과', org: '북구청', balance: 415000, pin: '2345' },
-  { code: 'A003', name: 'KT 침산지점', type: '기업', org: 'KT', balance: 87000, pin: '3456' },
-  { code: 'A004', name: '북부경찰서 교통과', type: '기타', org: '북부경찰서', balance: 12500, pin: '4567' },
-  { code: 'A005', name: '김다현', type: '개인', org: null, balance: 45000, pin: '5678' },
+  { code: 'A001', accountNumber: 1, name: '북구청 공원녹지과', type: '구청 과', org: '북구청', balance: 223400, pin: '1234' },
+  { code: 'A002', accountNumber: 2, name: '북구청 건설과', type: '구청 과', org: '북구청', balance: 415000, pin: '2345' },
+  { code: 'A003', accountNumber: 3, name: 'KT 침산지점', type: '기업', org: 'KT', balance: 87000, pin: '3456' },
+  { code: 'A004', accountNumber: 4, name: '북부경찰서 교통과', type: '기타', org: '북부경찰서', balance: 12500, pin: '4567' },
+  { code: 'A005', accountNumber: 5, name: '김다현', type: '개인', org: null, balance: 45000, pin: '5678' },
 ]
 
 export const CATEGORIES: Category[] = [

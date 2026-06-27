@@ -1,38 +1,86 @@
 'use client'
 
-import { useState, useCallback, useEffect } from 'react'
-import { useRouter } from 'next/navigation'
+import { useState, useCallback, useEffect, Suspense } from 'react'
+import { useRouter, useSearchParams } from 'next/navigation'
 import { useSessionStore } from '@/lib/store/session'
 import { useCartStore } from '@/lib/store/cart'
-import { ACCOUNTS } from '@/lib/mock-data'
-import { formatWon } from '@/lib/utils'
+import { getSupabaseClient } from '@/lib/supabase/client'
 import type { Account } from '@/lib/types'
 
 const PIN_LOCK_LIMIT = 5
 
-type Step = 'pin' | 'orderer'
+// DB account_type → Account.type 매핑
+const TYPE_MAP: Record<string, Account['type']> = {
+  '과':   '구청 과',
+  '기업': '기업',
+  '개인': '개인',
+  '기타': '기타',
+}
 
 export default function HomePage() {
+  return (
+    <Suspense>
+      <HomePageInner />
+    </Suspense>
+  )
+}
+
+function HomePageInner() {
   const router = useRouter()
-  const { setAccount, setOrderer, setPhone, pinAttempts, pinLocked, incrementPinAttempts, lockPin, resetSession } = useSessionStore()
+  const searchParams = useSearchParams()
+  const { setAccount, pinAttempts, pinLocked, incrementPinAttempts, lockPin, resetSession } = useSessionStore()
   const clearCart = useCartStore(s => s.clearCart)
 
-  const [step, setStep] = useState<Step>('pin')
   const [pin, setPin] = useState('')
   const [pinError, setPinError] = useState('')
   const [isShaking, setIsShaking] = useState(false)
-  const [matchedAccount, setMatchedAccount] = useState<Account | null>(null)
-  const [ordererName, setOrdererName] = useState('')
-  const [phoneNumber, setPhoneNumber] = useState('')
+  const [verifying, setVerifying] = useState(false)
+  const [storeName, setStoreName] = useState('샐러리아')
+  // QR로 거래처가 특정된 경우 해당 account_code 저장
+  const [qrAccountCode, setQrAccountCode] = useState<string | null>(null)
 
-  // 세션 초기화 (새 QR 스캔)
+  // 스토어명 로딩 (PIN 화면에 표시)
   useEffect(() => {
-    resetSession()
-    clearCart()
+    async function loadStoreName() {
+      const supabase = getSupabaseClient()
+      const { data } = await supabase.from('stores').select('name').limit(1).maybeSingle()
+      if (data?.name) setStoreName(data.name)
+    }
+    loadStoreName()
+  }, [])
+
+  // 세션 초기화 + 거래처 고유 QR 처리 (?account=코드)
+  useEffect(() => {
+    const accountCode = searchParams.get('account')
+
+    // QR 파라미터 없을 때만 세션 초기화 (메뉴→루트 리디렉트 시 세션 유지)
+    if (!accountCode) {
+      resetSession()
+      clearCart()
+      return
+    }
+
+    async function loadByQr() {
+      const supabase = getSupabaseClient()
+      const { data, error } = await supabase
+        .from('accounts')
+        .select('account_code, account_number, account_name, account_type, organization_name, current_balance, store_id')
+        .eq('account_code', accountCode)
+        .eq('is_active', true)
+        .maybeSingle()
+
+      if (error || !data) {
+        setPinError('QR 코드에 해당하는 거래처를 찾을 수 없습니다. 점주에게 문의하세요.')
+        return
+      }
+
+      // 거래처 특정 완료 — PIN 입력은 그대로 요구 (해당 거래처 PIN만 허용)
+      setQrAccountCode(data.account_code)
+    }
+    loadByQr()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  // PIN이 잠긴 상태 처리
   const isLocked = pinLocked || pinAttempts >= PIN_LOCK_LIMIT
 
   const triggerShake = useCallback(() => {
@@ -40,31 +88,62 @@ export default function HomePage() {
     setTimeout(() => setIsShaking(false), 400)
   }, [])
 
-  const verifyPin = useCallback((inputPin: string) => {
-    const found = ACCOUNTS.find(a => a.pin === inputPin)
-    if (found) {
-      setMatchedAccount(found)
-      setAccount(found)
-      setPinError('')
-      setTimeout(() => setStep('orderer'), 120)
-    } else {
-      const newAttempts = pinAttempts + 1
-      incrementPinAttempts()
-      triggerShake()
-      setPin('')
+  const verifyPin = useCallback(async (inputPin: string) => {
+    if (verifying) return
+    setVerifying(true)
+    try {
+      const supabase = getSupabaseClient()
 
-      if (newAttempts >= PIN_LOCK_LIMIT) {
-        lockPin()
-        setPinError('')
-      } else {
-        const remaining = PIN_LOCK_LIMIT - newAttempts
-        setPinError(`비밀번호가 틀렸습니다. (${newAttempts}회 오류, ${remaining}회 남음)`)
+      // QR로 거래처가 특정됐으면 해당 거래처 PIN만 확인, 아니면 전체 검색
+      let query = supabase
+        .from('accounts')
+        .select('account_code, account_number, account_name, account_type, organization_name, current_balance, store_id')
+        .eq('pin_code', inputPin)
+        .eq('is_active', true)
+
+      if (qrAccountCode) {
+        query = query.eq('account_code', qrAccountCode)
       }
+
+      const { data, error } = await query.maybeSingle()
+
+      if (error || !data) {
+        const newAttempts = pinAttempts + 1
+        incrementPinAttempts()
+        triggerShake()
+        setPin('')
+
+        if (newAttempts >= PIN_LOCK_LIMIT) {
+          lockPin()
+          setPinError('')
+        } else {
+          const remaining = PIN_LOCK_LIMIT - newAttempts
+          setPinError(`비밀번호가 틀렸습니다. (${newAttempts}회 오류, ${remaining}회 남음)`)
+        }
+        return
+      }
+
+      const account: Account = {
+        code:          data.account_code,
+        accountNumber: data.account_number,
+        name:          data.account_name,
+        type:          TYPE_MAP[data.account_type] ?? '기타',
+        org:           data.organization_name ?? null,
+        balance:       data.current_balance,
+        pin:           inputPin,
+        storeId:       data.store_id ?? undefined,
+        storeName,
+      }
+      setAccount(account)
+      setPinError('')
+      setTimeout(() => router.push('/menu'), 120)
+    } finally {
+      setVerifying(false)
     }
-  }, [pinAttempts, incrementPinAttempts, lockPin, setAccount, triggerShake])
+  }, [pinAttempts, incrementPinAttempts, lockPin, setAccount, triggerShake, verifying, router, storeName, qrAccountCode])
 
   const handleNumpad = useCallback((val: string) => {
-    if (isLocked) return
+    if (isLocked || verifying) return
     if (val === 'del') {
       setPin(p => p.slice(0, -1))
       setPinError('')
@@ -79,25 +158,7 @@ export default function HomePage() {
     if (next.length === 4) {
       setTimeout(() => verifyPin(next), 120)
     }
-  }, [pin, isLocked, verifyPin])
-
-  // 전화번호 자동 하이픈 포맷 (010-0000-0000)
-  function formatPhone(raw: string): string {
-    const digits = raw.replace(/\D/g, '').slice(0, 11)
-    if (digits.length <= 3) return digits
-    if (digits.length <= 7) return `${digits.slice(0,3)}-${digits.slice(3)}`
-    return `${digits.slice(0,3)}-${digits.slice(3,7)}-${digits.slice(7)}`
-  }
-
-  // 010-XXXX-XXXX 형식 완성 여부
-  const isPhoneValid = phoneNumber.replace(/\D/g, '').length === 11
-
-  const handleOrdererSubmit = useCallback(() => {
-    if (!ordererName.trim() || !isPhoneValid || !matchedAccount) return
-    setOrderer(ordererName.trim())
-    setPhone(phoneNumber)
-    router.push('/menu')
-  }, [ordererName, isPhoneValid, phoneNumber, matchedAccount, setOrderer, setPhone, router])
+  }, [pin, isLocked, verifying, verifyPin])
 
   // ── 잠김 화면 ──
   if (isLocked) {
@@ -113,96 +174,7 @@ export default function HomePage() {
     )
   }
 
-  // ── 주문자 입력 (Step 2) ──
-  if (step === 'orderer' && matchedAccount) {
-    return (
-      <div className="flex flex-col h-screen bg-white">
-        {/* 스크롤 영역 */}
-        <div className="flex-1 overflow-y-auto">
-          {/* 헤더 */}
-          <div className="flex items-center px-5 pt-12 pb-4">
-            <button
-              onClick={() => { setStep('pin'); setPin(''); setPinError('') }}
-              className="p-2 -ml-2 text-[#1E1E1E] text-xl"
-              aria-label="뒤로"
-            >
-              ←
-            </button>
-          </div>
-
-          {/* 거래처 확인 배지 */}
-          <div className="px-5 mb-6">
-            <div className="bg-[#E6F4EC] rounded-xl px-4 py-3 flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <span className="text-[#017333] font-bold text-lg">✓</span>
-                <span className="text-[14px] font-semibold text-[#017333]">{matchedAccount.name}</span>
-              </div>
-              <span className={[
-                'text-[13px] font-bold',
-                matchedAccount.balance < 30000 ? 'text-[#C92A2A]' : 'text-[#017333]',
-              ].join(' ')}>
-                잔액 {formatWon(matchedAccount.balance)}
-              </span>
-            </div>
-          </div>
-
-          {/* 안내 텍스트 */}
-          <div className="px-5 mb-8">
-            <h1 className="text-[22px] font-bold text-[#1E1E1E] mb-2">주문자 정보를 입력해 주세요</h1>
-            <p className="text-[14px] text-[#727272]">메뉴 준비 중 연락이 필요할 수 있어요.</p>
-          </div>
-
-          {/* 입력 필드 */}
-          <div className="px-5 space-y-8 pb-8">
-            {/* 이름 */}
-            <div>
-              <label className="text-[12px] font-semibold text-[#727272] mb-1.5 block">이름</label>
-              <input
-                type="text"
-                value={ordererName}
-                onChange={e => setOrdererName(e.target.value)}
-                onKeyDown={e => e.key === 'Enter' && handleOrdererSubmit()}
-                placeholder="예: 김지은"
-                maxLength={20}
-                autoFocus
-                className="w-full border-b-2 border-[#017333] py-3 text-[18px] text-[#1E1E1E] placeholder-[#D7D7D7] outline-none bg-transparent"
-              />
-            </div>
-
-            {/* 전화번호 */}
-            <div>
-              <label className="text-[12px] font-semibold text-[#727272] mb-1.5 block">전화번호</label>
-              <input
-                type="tel"
-                value={phoneNumber}
-                onChange={e => setPhoneNumber(formatPhone(e.target.value))}
-                onKeyDown={e => e.key === 'Enter' && handleOrdererSubmit()}
-                placeholder="010-0000-0000"
-                inputMode="numeric"
-                className="w-full border-b-2 border-[#D7D7D7] py-3 text-[18px] text-[#1E1E1E] placeholder-[#D7D7D7] outline-none bg-transparent focus:border-[#017333] transition-colors"
-              />
-            </div>
-          </div>
-        </div>
-
-        {/* 하단 버튼 */}
-        <div
-          className="px-5 py-5 bg-white flex-shrink-0"
-          style={{ boxShadow: '0 -4px 20px rgba(0,0,0,0.08)' }}
-        >
-          <button
-            onClick={handleOrdererSubmit}
-            disabled={!ordererName.trim() || !isPhoneValid}
-            className="w-full py-[17px] bg-[#1E1E1E] text-white rounded-xl text-base font-bold disabled:bg-[#CCC] disabled:cursor-not-allowed transition-colors"
-          >
-            메뉴 보기
-          </button>
-        </div>
-      </div>
-    )
-  }
-
-  // ── PIN 입력 (Step 1) ──
+  // ── PIN 입력 ──
   const numpadRows = [
     ['1', '2', '3'],
     ['4', '5', '6'],
@@ -212,12 +184,10 @@ export default function HomePage() {
 
   return (
     <div className="flex flex-col min-h-screen bg-white">
-      {/* 로고 */}
       <div className="flex flex-col items-center pt-16 pb-4 px-5">
-        <div className="text-[28px] font-bold text-[#017333] mb-1">🥗 샐러리아 침산점</div>
+        <div className="text-[28px] font-bold text-[#017333] mb-1">🥗 {storeName}</div>
       </div>
 
-      {/* 안내 텍스트 */}
       <div className="text-center px-8 mb-10">
         <h1 className="text-[20px] font-bold text-[#1E1E1E] mb-2">선결제 비밀번호를 입력해 주세요</h1>
         <p className="text-[13px] text-[#727272] leading-relaxed">
@@ -225,7 +195,6 @@ export default function HomePage() {
         </p>
       </div>
 
-      {/* PIN 도트 */}
       <div className={`flex justify-center gap-4 mb-4 ${isShaking ? 'shake' : ''}`}>
         {[0, 1, 2, 3].map(i => {
           const filled = i < pin.length
@@ -246,14 +215,15 @@ export default function HomePage() {
         })}
       </div>
 
-      {/* 에러 메시지 */}
       <div className="text-center min-h-[20px] mb-6 px-8">
-        {pinError && (
+        {verifying && (
+          <p className="text-[13px] text-[#017333] font-medium">확인 중...</p>
+        )}
+        {!verifying && pinError && (
           <p className="text-[13px] text-[#C92A2A] font-medium">{pinError}</p>
         )}
       </div>
 
-      {/* 숫자 패드 */}
       <div className="px-6 flex-1">
         <div className="grid grid-cols-3 gap-3">
           {numpadRows.flat().map((key, idx) => {
@@ -276,7 +246,8 @@ export default function HomePage() {
               <button
                 key={idx}
                 onClick={() => handleNumpad(key)}
-                className="h-[68px] bg-[#FAFAFA] rounded-2xl text-[22px] font-semibold text-[#1E1E1E] flex items-center justify-center select-none active:bg-[#E8E8E8] transition-colors"
+                disabled={verifying}
+                className="h-[68px] bg-[#FAFAFA] rounded-2xl text-[22px] font-semibold text-[#1E1E1E] flex items-center justify-center select-none active:bg-[#E8E8E8] transition-colors disabled:opacity-40"
               >
                 {key}
               </button>

@@ -1,13 +1,49 @@
 'use client'
 
-import { useState, useCallback } from 'react'
+import { useState, useCallback, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import { useSessionStore } from '@/lib/store/session'
 import { useCartStore } from '@/lib/store/cart'
-import { MENUS } from '@/lib/mock-data'
+import { getSupabaseClient } from '@/lib/supabase/client'
 import { formatWon, calcSubtotal } from '@/lib/utils'
-import type { SelectedOption } from '@/lib/types'
+import type { Menu, MenuOptionGroup, SelectedOption } from '@/lib/types'
 import OptionGroup from '@/components/menu/option-group'
+
+function mapDbMenu(row: any): Menu {
+  const options: MenuOptionGroup[] = (row.menu_option_groups ?? [])
+    .sort((a: any, b: any) => a.display_order - b.display_order)
+    .map((mog: any) => {
+      const og = mog.option_groups
+      return {
+        group: og.name,
+        required: og.is_required,
+        multi: og.is_multi,
+        items: (og.option_items ?? [])
+          .filter((it: any) => !it.is_hidden)
+          .sort((a: any, b: any) => a.display_order - b.display_order)
+          .map((it: any) => ({
+            id: it.id,
+            name: it.name,
+            plus: it.extra_price,
+            isSoldOut: it.is_sold_out,
+          })),
+      }
+    })
+
+  return {
+    code:      row.id,
+    cat:       row.category_id,
+    name:      row.name,
+    desc:      row.description ?? '',
+    price:     row.base_price,
+    emoji:     '🍽️',
+    imageUrl:  row.image_url ?? undefined,
+    popular:   row.is_popular,
+    isSoldOut: row.is_sold_out,
+    isHidden:  row.is_hidden,
+    options,
+  }
+}
 
 export default function MenuDetailClient({ code }: { code: string }) {
   const router = useRouter()
@@ -15,11 +51,53 @@ export default function MenuDetailClient({ code }: { code: string }) {
   const account = useSessionStore(s => s.account)
   const addItem = useCartStore(s => s.addItem)
 
+  const [menu, setMenu] = useState<Menu | null>(null)
+  const [loading, setLoading] = useState(true)
   const [selectedMap, setSelectedMap] = useState<Record<number, string[]>>({})
   const [qty, setQty] = useState(1)
   const [missingGroups, setMissingGroups] = useState<number[]>([])
 
-  const menu = MENUS.find(m => m.code === code)
+  useEffect(() => {
+    async function fetchMenu() {
+      setLoading(true)
+      const supabase = getSupabaseClient()
+      const { data, error } = await supabase
+        .from('menus')
+        .select(`
+          id, category_id, name, description, base_price, image_url,
+          is_popular, is_sold_out, is_hidden,
+          menu_option_groups (
+            display_order,
+            option_groups (
+              id, name, is_required, is_multi, max_select,
+              option_items ( id, name, extra_price, is_sold_out, is_hidden, display_order )
+            )
+          )
+        `)
+        .eq('id', code)
+        .single()
+
+      if (error || !data) {
+        router.replace('/menu')
+        return
+      }
+      const mapped = mapDbMenu(data)
+      setMenu(mapped)
+
+      // 필수 옵션그룹의 첫 번째 항목 자동 선택
+      const initial: Record<number, string[]> = {}
+      mapped.options.forEach((group, idx) => {
+        if (group.required && group.items.length > 0) {
+          const first = group.items.find(it => !it.isSoldOut) ?? group.items[0]
+          initial[idx] = [first.id]
+        }
+      })
+      if (Object.keys(initial).length > 0) setSelectedMap(initial)
+
+      setLoading(false)
+    }
+    fetchMenu()
+  }, [code, router])
 
   const handleToggle = useCallback((groupIndex: number, itemId: string) => {
     if (!menu) return
@@ -44,10 +122,15 @@ export default function MenuDetailClient({ code }: { code: string }) {
     setMissingGroups(prev => prev.filter(i => i !== groupIndex))
   }, [menu])
 
-  if (!menu) {
-    if (typeof window !== 'undefined') router.replace('/menu')
-    return null
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center min-h-screen bg-white">
+        <div className="w-8 h-8 border-4 border-[#017333] border-t-transparent rounded-full animate-spin" />
+      </div>
+    )
   }
+
+  if (!menu) return null
 
   const selectedOptions: SelectedOption[] = menu.options.flatMap((group, gIdx) =>
     (selectedMap[gIdx] ?? []).flatMap(id => {
@@ -84,24 +167,29 @@ export default function MenuDetailClient({ code }: { code: string }) {
     <div className="flex flex-col min-h-screen bg-white">
       {/* ── 헤더 ── */}
       <div className="fixed top-0 left-0 right-0 z-10 bg-white border-b border-[#F0F0F0]" style={{ maxWidth: '430px', margin: '0 auto', paddingTop: 'env(safe-area-inset-top)' }}>
-        <div className="flex items-center px-4 py-4">
+        <div className="flex items-center px-4 py-4 relative">
           <button
             onClick={() => router.back()}
-            className="flex items-center gap-1 text-[14px] font-semibold text-[#1E1E1E]"
+            className="text-xl text-[#1E1E1E] z-10"
           >
-            <span className="text-xl">←</span>
-            <span>메뉴 선택</span>
+            ←
           </button>
+          <span className="absolute inset-0 flex items-center justify-center text-[15px] font-bold text-[#1E1E1E] pointer-events-none">
+            메뉴 선택
+          </span>
         </div>
       </div>
 
       {/* ── 스크롤 영역 ── */}
       <div className="flex-1 pb-[100px] overflow-y-auto" style={{ paddingTop: 'calc(env(safe-area-inset-top) + 57px)' }}>
         <div
-          className="w-full bg-[#F5F5F5] flex items-center justify-center"
+          className="w-full bg-[#F5F5F5] overflow-hidden flex items-center justify-center"
           style={{ aspectRatio: '16/10' }}
         >
-          <span style={{ fontSize: '72px' }}>{menu.emoji}</span>
+          {menu.imageUrl
+            ? <img src={menu.imageUrl} alt={menu.name} className="w-full h-full object-cover" />
+            : <span style={{ fontSize: '72px' }}>{menu.emoji}</span>
+          }
         </div>
 
         <div className="px-5 pt-5 pb-4">

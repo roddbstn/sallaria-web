@@ -16,6 +16,7 @@ export default function SuccessPage() {
 
   const [status, setStatus] = useState<OrderResultStatus>('pending')
   const [orderCode, setOrderCode] = useState<string | null>(null)
+  const [orderNumber, setOrderNumber] = useState<string | null>(null)
   const [orderMethod, setOrderMethod] = useState<string>('')
   const [orderTotal, setOrderTotal] = useState<number>(0)
   const [orderOrderer, setOrderOrderer] = useState<string>('')
@@ -30,6 +31,7 @@ export default function SuccessPage() {
   useEffect(() => {
     // sessionStorage에서 주문 정보 읽기
     const code = sessionStorage.getItem('last_order_code')
+    const num = sessionStorage.getItem('last_order_number')
     const method = sessionStorage.getItem('last_order_method') ?? ''
     const total = Number(sessionStorage.getItem('last_order_total') ?? '0')
     const orderer = sessionStorage.getItem('last_order_orderer') ?? ''
@@ -43,6 +45,7 @@ export default function SuccessPage() {
     }
 
     setOrderCode(code)
+    setOrderNumber(num)
     setOrderMethod(method)
     setOrderTotal(total)
     setOrderOrderer(orderer)
@@ -56,11 +59,24 @@ export default function SuccessPage() {
       return
     }
 
-    // Supabase Realtime 구독
+    // Supabase Realtime 구독 (postgres_changes + broadcast 병행)
     try {
       const supabase = getSupabaseClient()
       const channel = supabase
         .channel(`orders:order_code=${code}`)
+        // DB 상태 변경 감지 (POS가 status 컬럼 업데이트할 때)
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'orders', filter: `order_code=eq.${code}` }, (payload: any) => {
+          const s = payload.new?.status
+          if (s === '조리중' || s === '완료') {
+            setStatus('accepted')
+            setEstimatedMinutes(null)
+          } else if (s === '취소') {
+            setStatus('rejected')
+            setRejectedReason('점주가 주문을 거부했습니다.')
+          }
+        })
+        // broadcast 이벤트 (예상 소요시간 포함)
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         .on('broadcast', { event: 'ORDER_ACCEPTED' }, ({ payload }: { payload: any }) => {
           setStatus('accepted')
@@ -177,10 +193,12 @@ export default function SuccessPage() {
 
         {/* 주문 상세 정보 */}
         <div className="bg-[#FAFAFA] rounded-xl p-4 space-y-2 text-sm">
-          {orderCode && (
-            <div className="flex justify-between">
+          {(orderNumber ?? orderCode) && (
+            <div className="flex justify-between items-center">
               <span className="text-[#727272]">주문번호</span>
-              <span className="font-mono font-semibold text-[#1E1E1E] text-xs">{orderCode}</span>
+              <span className="font-mono font-bold text-[#1E1E1E] text-lg tracking-wider">
+                #{orderNumber ?? orderCode}
+              </span>
             </div>
           )}
           {orderAccount && (

@@ -2,7 +2,7 @@
 export default function OrderLayout({ children }: { children: React.ReactNode }) {
   return (
     <div
-      className="max-w-[430px] mx-auto min-h-screen bg-white relative overflow-x-hidden"
+      className="max-w-[430px] mx-auto min-h-screen bg-white relative"
       style={{ paddingTop: 'env(safe-area-inset-top)' }}
     >
       {children}

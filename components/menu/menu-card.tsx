@@ -22,10 +22,13 @@ export default function MenuCard({ menu, onClick }: MenuCardProps) {
         isSoldOut ? 'pointer-events-none opacity-50' : '',
       ].join(' ')}
     >
-      {/* 이미지 썸네일 (이모지) */}
+      {/* 이미지 썸네일 */}
       <div className="relative flex-shrink-0">
-        <div className="w-[88px] h-[88px] bg-[#F5F5F5] rounded-xl flex items-center justify-center text-[38px]">
-          {menu.emoji}
+        <div className="w-[88px] h-[88px] bg-[#F5F5F5] rounded-xl overflow-hidden flex items-center justify-center text-[38px]">
+          {menu.imageUrl
+            ? <img src={menu.imageUrl} alt={menu.name} className="w-full h-full object-cover" />
+            : menu.emoji
+          }
         </div>
         {isSoldOut && (
           <div className="absolute inset-0 bg-black/40 rounded-xl flex items-center justify-center">

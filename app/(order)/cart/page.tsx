@@ -1,7 +1,6 @@
 'use client'
 
 import { useRouter } from 'next/navigation'
-import { useState } from 'react'
 import { useCartStore } from '@/lib/store/cart'
 import { useSessionStore } from '@/lib/store/session'
 import CartItemComponent from '@/components/cart/CartItem'
@@ -18,24 +17,17 @@ export default function CartPage() {
     deliveryFee,
     totalAmount,
   } = useCartStore()
-  const { account, orderer, setOrderer } = useSessionStore()
-
-  const [localOrderer, setLocalOrderer] = useState(orderer)
+  const { account } = useSessionStore()
 
   const isEmpty = items.length === 0
   const currentBalance = account?.balance ?? 0
 
-  // 확인 버튼 disabled 조건: 빈 장바구니 | 주문자명 없음
+  // 확인 버튼 disabled 조건: 빈 장바구니
   // 잔액 음수는 허용 (경고만)
-  const isDisabled = isEmpty || !localOrderer.trim()
-
-  function handleOrdererChange(e: React.ChangeEvent<HTMLInputElement>) {
-    setLocalOrderer(e.target.value)
-  }
+  const isDisabled = isEmpty
 
   function handleConfirm() {
     if (isDisabled) return
-    setOrderer(localOrderer.trim())
     router.push('/checkout')
   }
 
@@ -98,20 +90,6 @@ export default function CartPage() {
                   onEditOption={handleEditOption}
                 />
               ))}
-            </div>
-
-            {/* 주문자 이름 입력 */}
-            <div className="mt-4">
-              <label className="block text-sm font-semibold text-[#1E1E1E] mb-1.5">
-                주문자 이름
-              </label>
-              <input
-                type="text"
-                value={localOrderer}
-                onChange={handleOrdererChange}
-                placeholder="이름을 입력해주세요"
-                className="w-full px-4 py-3 rounded-xl border border-[#D7D7D7] text-sm text-[#1E1E1E] placeholder:text-[#D7D7D7] focus:outline-none focus:border-[#1E1E1E] transition-colors"
-              />
             </div>
 
             {/* 주문 요약 */}

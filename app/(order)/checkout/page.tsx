@@ -27,10 +27,41 @@ export default function CheckoutPage() {
     totalAmount,
     clearCart,
   } = useCartStore()
-  const { account, orderer, phone } = useSessionStore()
+  const { account, setOrderer, setPhone } = useSessionStore()
 
+  const [ordererName, setOrdererName] = useState('')
+  const [phoneNumber, setPhoneNumber] = useState('')
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
+
+  function formatPhone(raw: string): string {
+    const digits = raw.replace(/\D/g, '').slice(0, 11)
+    if (digits.length <= 3) return digits
+    if (digits.length <= 7) return `${digits.slice(0,3)}-${digits.slice(3)}`
+    return `${digits.slice(0,3)}-${digits.slice(3,7)}-${digits.slice(7)}`
+  }
+
+  const isPhoneValid = phoneNumber.replace(/\D/g, '').length === 11
+
+  function handleTag(label: string) {
+    const active = remarks.includes(label)
+    function remove(str: string, tag: string) {
+      return str.replace(tag, '').replace(/^,\s*|,\s*$|,\s*,/g, '').trim()
+    }
+    if (active) {
+      setRemarks(remove(remarks, label))
+    } else {
+      // 수저·포크 O / X 는 상호 배타적
+      const partner = label === '수저·포크 O' ? '수저·포크 X'
+                    : label === '수저·포크 X' ? '수저·포크 O'
+                    : null
+      const base = partner ? remove(remarks, partner) : remarks
+      setRemarks(base ? `${base}, ${label}` : label)
+    }
+  }
+
+  // 개인 거래처는 account.name이 곧 주문자 — 이름/전화번호 입력 불필요
+  const isPersonal = account?.type === '개인'
 
   const currentBalance = account?.balance ?? 0
   const subtotal = totalSubtotal()
@@ -40,55 +71,67 @@ export default function CheckoutPage() {
   const isNegative = afterBalance < 0
 
   async function handleOrder() {
-    if (!account || !orderer || items.length === 0) return
+    if (!account || !method || items.length === 0) return
+    if (!isPersonal && (!ordererName.trim() || !isPhoneValid)) return
     setIsSubmitting(true)
     setError(null)
 
+    const finalOrderer = isPersonal ? account.name : ordererName.trim()
+    const finalPhone   = isPersonal ? '' : phoneNumber
+    setOrderer(finalOrderer)
+    setPhone(finalPhone)
+
     // sessionStorage에 주문 정보 저장 후 성공 화면으로 이동하는 헬퍼
-    function saveAndRedirect(orderCode: string) {
+    function saveAndRedirect(orderCode: string, orderNumber?: string) {
       sessionStorage.setItem('last_order_code', orderCode)
-      sessionStorage.setItem('last_order_method', method)
+      sessionStorage.setItem('last_order_number', orderNumber ?? orderCode)
+      sessionStorage.setItem('last_order_method', method!)
       sessionStorage.setItem('last_order_total', String(total))
-      sessionStorage.setItem('last_order_orderer', orderer)
-      sessionStorage.setItem('last_order_phone', phone)
+      sessionStorage.setItem('last_order_orderer', finalOrderer)
+      sessionStorage.setItem('last_order_phone', finalPhone)
       sessionStorage.setItem('last_order_account', account!.name)
       clearCart()
       router.push('/success')
     }
 
     try {
-      // RPC 페이로드 구성 (단가 스냅샷)
+      // RPC 페이로드 구성 (단가·메뉴명·옵션명 스냅샷)
       const payload: OrderItemPayload[] = items.map((item) => ({
-        menu_code: item.menuCode,
-        qty: item.qty,
-        unit_price: item.basePrice + item.selectedOptions.reduce((s, o) => s + o.plus, 0),
-        options: item.selectedOptions.map((o) => ({
-          option_id: o.optionId,
-          extra_price: o.plus,
-        })),
+        menu_id:         item.menuCode,
+        menu_name:       item.menuName,
+        quantity:        item.qty,
+        unit_price:      item.basePrice + item.selectedOptions.reduce((s, o) => s + o.plus, 0),
+        option_item_ids: item.selectedOptions.map((o) => o.optionId),
+        option_names:    item.selectedOptions.map((o) => o.optionName),
+        option_prices:   item.selectedOptions.map((o) => o.plus),
       }))
 
       // Supabase RPC 직접 호출 (static export 환경)
       const supabase = getSupabaseClient()
       const { data, error: rpcError } = await supabase.rpc('create_order', {
         p_account_code: account.code,
-        p_orderer: orderer,
-        p_method: method,
-        p_items: payload,
+        p_orderer_name: finalOrderer,
+        p_method:       method,
+        p_items:        payload,
+        p_delivery_fee: method === '배달' ? DELIVERY_FEE : 0,
+        p_note:         remarks || null,
       })
 
       if (rpcError || !data) {
         // Supabase 미연결 시 MOCK fallback
         console.warn('[checkout] Supabase unavailable, using mock:', rpcError)
-        saveAndRedirect(`MOCK-${Date.now()}`)
+        const mockId = `MOCK-${Date.now()}`
+        saveAndRedirect(mockId, mockId)
         return
       }
 
-      saveAndRedirect(data.order_code)
+      // RPC는 { order_code, order_number } jsonb를 반환
+      const result = data as { order_code: string; order_number: string }
+      saveAndRedirect(result.order_code, result.order_number)
     } catch (err) {
       console.error('[checkout] unexpected error, using mock:', err)
-      // 예외 시에도 MOCK fallback으로 주문 완료 처리
-      saveAndRedirect(`MOCK-${Date.now()}`)
+      const mockId = `MOCK-${Date.now()}`
+      saveAndRedirect(mockId, mockId)
     } finally {
       setIsSubmitting(false)
     }
@@ -122,19 +165,39 @@ export default function CheckoutPage() {
 
       {/* Body */}
       <div className="flex-1 overflow-y-auto px-4 py-4 space-y-5">
-        {/* 주문자 정보 */}
-        <section>
-          <h2 className="text-sm font-bold text-[#1E1E1E] mb-2">주문자 정보</h2>
-          <div className="bg-[#FAFAFA] rounded-xl px-4 py-3 space-y-1.5 text-sm">
-            <div className="flex justify-between">
-              <span className="text-[#727272]">거래처</span>
-              <span className="font-semibold text-[#1E1E1E]">{account?.name}</span>
-            </div>
-            <div className="flex justify-between">
-              <span className="text-[#727272]">주문자</span>
-              <span className="font-semibold text-[#1E1E1E]">{orderer}</span>
-            </div>
-          </div>
+        {/* 거래처 + 주문자 입력 */}
+        <section className="space-y-3">
+          <p className="text-base font-bold text-[#1E1E1E]">{account?.name}</p>
+          {!isPersonal && (
+            <>
+              <div>
+                <label className="text-[12px] font-semibold text-[#727272] mb-1.5 block">
+                  이름 <span className="text-[#C92A2A]">*</span>
+                </label>
+                <input
+                  type="text"
+                  value={ordererName}
+                  onChange={e => setOrdererName(e.target.value)}
+                  placeholder="예: 김지은"
+                  maxLength={20}
+                  className="w-full border border-[#D7D7D7] rounded-xl px-4 py-3 text-sm text-[#1E1E1E] placeholder:text-[#D7D7D7] outline-none focus:border-[#1E1E1E] transition-colors"
+                />
+              </div>
+              <div>
+                <label className="text-[12px] font-semibold text-[#727272] mb-1.5 block">
+                  전화번호 <span className="text-[#C92A2A]">*</span>
+                </label>
+                <input
+                  type="tel"
+                  value={phoneNumber}
+                  onChange={e => setPhoneNumber(formatPhone(e.target.value))}
+                  placeholder="010-0000-0000"
+                  inputMode="numeric"
+                  className="w-full border border-[#D7D7D7] rounded-xl px-4 py-3 text-sm text-[#1E1E1E] placeholder:text-[#D7D7D7] outline-none focus:border-[#1E1E1E] transition-colors"
+                />
+              </div>
+            </>
+          )}
         </section>
 
         {/* 이용방법 선택 */}
@@ -167,12 +230,12 @@ export default function CheckoutPage() {
           {/* 퀵 선택 버튼 */}
           <div className="flex flex-wrap gap-2 mb-2">
             {['수저·포크 O', '수저·포크 X', '소스 따로', '덜 맵게'].map((label) => {
-              const active = remarks === label || remarks.includes(label)
+              const active = remarks.includes(label)
               return (
                 <button
                   key={label}
                   type="button"
-                  onClick={() => setRemarks(active ? remarks.replace(label, '').replace(/^,\s*|,\s*$|,\s*,/g, '').trim() : remarks ? `${remarks}, ${label}` : label)}
+                  onClick={() => handleTag(label)}
                   className={`px-3 py-1.5 rounded-full text-[13px] font-semibold transition-colors ${
                     active
                       ? 'bg-[#E6F4EC] text-[#017333]'
@@ -272,9 +335,9 @@ export default function CheckoutPage() {
       <footer className="flex-shrink-0 px-4 py-4 border-t border-[#D7D7D7] bg-white shadow-[0_-4px_20px_rgba(0,0,0,0.08)]">
         <button
           onClick={handleOrder}
-          disabled={isSubmitting}
+          disabled={isSubmitting || !method || (!isPersonal && (!ordererName.trim() || !isPhoneValid))}
           className={`w-full py-4 rounded-xl font-bold text-white text-base transition-colors ${
-            isSubmitting ? 'bg-[#CCC] cursor-not-allowed' : 'bg-[#1E1E1E] active:scale-95'
+            isSubmitting || !method || (!isPersonal && (!ordererName.trim() || !isPhoneValid)) ? 'bg-[#CCC] cursor-not-allowed' : 'bg-[#1E1E1E] active:scale-95'
           }`}
         >
           {isSubmitting ? '주문 중...' : '주문하기'}

@@ -23,6 +23,10 @@
   --color-danger: #C92A2A;
 }
 
+html {
+  overflow-x: hidden;
+}
+
 body {
   font-family: -apple-system, "Apple SD Gothic Neo", "Malgun Gothic", "맑은 고딕", sans-serif;
   -webkit-font-smoothing: antialiased;

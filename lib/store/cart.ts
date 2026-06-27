@@ -34,7 +34,7 @@ export const useCartStore = create<CartState>()(
   persist(
     (set, get) => ({
       items: [],
-      method: '포장',
+      method: null,
       remarks: '',
 
       addItem: (menuCode, menuName, basePrice, qty, selectedOptions) => {
@@ -68,7 +68,7 @@ export const useCartStore = create<CartState>()(
       setMethod: (method) => set({ method }),
       setRemarks: (remarks) => set({ remarks }),
 
-      clearCart: () => set({ items: [], method: '포장', remarks: '' }),
+      clearCart: () => set({ items: [], method: null, remarks: '' }),
 
       // 총 수량
       totalQty: () => get().items.reduce((s, i) => s + i.qty, 0),
