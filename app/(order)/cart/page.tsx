@@ -71,7 +71,7 @@ export default function CartPage() {
             <p className="text-sm">장바구니가 비어있어요.</p>
             <button
               onClick={() => router.push('/menu')}
-              className="mt-4 text-sm text-[#017333] font-semibold underline underline-offset-2"
+              className="mt-5 px-6 py-3 bg-[#017333] text-white text-sm font-bold rounded-xl active:opacity-80 transition-opacity"
             >
               메뉴 보러가기
             </button>
