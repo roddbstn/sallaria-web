@@ -305,14 +305,15 @@ export default function SuccessPage() {
               <p className="text-sm text-[#017333] font-semibold mt-0.5">매장에서 받아가세요</p>
             )}
           </div>
-          <div className={[
-            'w-9 h-9 rounded-full flex items-center justify-center flex-shrink-0',
-            isReady ? 'bg-[#017333]' : 'bg-[#017333]',
-          ].join(' ')}>
-            <span className="text-white text-lg font-bold leading-none">
-              {isReady ? (isDelivery ? '🛵' : '🎉') : '✓'}
+          {isReady ? (
+            <span className="text-[36px] leading-none flex-shrink-0">
+              {isDelivery ? '🛵' : '🎉'}
             </span>
-          </div>
+          ) : (
+            <div className="w-9 h-9 rounded-full bg-[#017333] flex items-center justify-center flex-shrink-0">
+              <span className="text-white text-lg font-bold leading-none">✓</span>
+            </div>
+          )}
         </div>
 
         {/* 타이머 (준비 전에만) */}
@@ -328,6 +329,9 @@ export default function SuccessPage() {
                 style={{ width: `${progress * 100}%` }}
               />
             </div>
+            <p className="text-[11px] text-[#727272] mt-2 text-center">
+              준비가 일찍 끝날 수도 있어요. 새로고침해서 확인해보세요 🔄
+            </p>
           </div>
         )}
 
@@ -344,25 +348,25 @@ export default function SuccessPage() {
           {orderAccount && (
             <div className="flex justify-between">
               <span className="text-[#727272]">거래처</span>
-              <span className="font-semibold text-[#1E1E1E]">{orderAccount}</span>
+              <span className="font-normal text-[#1E1E1E]">{orderAccount}</span>
             </div>
           )}
           {orderOrderer && (
             <div className="flex justify-between">
               <span className="text-[#727272]">주문자</span>
-              <span className="font-semibold text-[#1E1E1E]">{orderOrderer}</span>
+              <span className="font-normal text-[#1E1E1E]">{orderOrderer}</span>
             </div>
           )}
           {orderPhone && (
             <div className="flex justify-between">
               <span className="text-[#727272]">연락처</span>
-              <span className="font-semibold text-[#1E1E1E]">{orderPhone}</span>
+              <span className="font-normal text-[#1E1E1E]">{orderPhone}</span>
             </div>
           )}
           {orderMethod && (
             <div className="flex justify-between">
               <span className="text-[#727272]">이용방법</span>
-              <span className="font-semibold text-[#1E1E1E]">
+              <span className="font-normal text-[#1E1E1E]">
                 {orderMethod}{orderMethod === '배달' ? ' (+3,500원)' : ''}
               </span>
             </div>
