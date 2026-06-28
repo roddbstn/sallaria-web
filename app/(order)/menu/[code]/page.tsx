@@ -1,8 +1,7 @@
+import { Suspense } from 'react'
 import { createClient } from '@supabase/supabase-js'
 import MenuDetailClient from './menu-detail-client'
 
-// output: 'export' 에서 정적 생성. Firebase rewrite (**→/index.html)가 fallback 처리함.
-export const dynamicParams = false
 
 export async function generateStaticParams() {
   const url  = process.env.NEXT_PUBLIC_SUPABASE_URL
@@ -25,5 +24,9 @@ export async function generateStaticParams() {
 
 export default async function MenuDetailPage({ params }: { params: Promise<{ code: string }> }) {
   const { code } = await params
-  return <MenuDetailClient code={code} />
+  return (
+    <Suspense>
+      <MenuDetailClient code={code} />
+    </Suspense>
+  )
 }

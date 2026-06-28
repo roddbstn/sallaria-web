@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useCallback, useEffect } from 'react'
-import { useRouter } from 'next/navigation'
+import { useRouter, useSearchParams } from 'next/navigation'
 import { useSessionStore } from '@/lib/store/session'
 import { useCartStore } from '@/lib/store/cart'
 import { getSupabaseClient } from '@/lib/supabase/client'
@@ -47,9 +47,11 @@ function mapDbMenu(row: any): Menu {
 
 export default function MenuDetailClient({ code }: { code: string }) {
   const router = useRouter()
+  const searchParams = useSearchParams()
+  const editCartId = searchParams.get('edit')   // 장바구니 수정 모드
 
-  const account = useSessionStore(s => s.account)
-  const addItem = useCartStore(s => s.addItem)
+  const account    = useSessionStore(s => s.account)
+  const { addItem, updateItem, items } = useCartStore(s => ({ addItem: s.addItem, updateItem: s.updateItem, items: s.items }))
 
   const [menu, setMenu] = useState<Menu | null>(null)
   const [loading, setLoading] = useState(true)
@@ -84,15 +86,27 @@ export default function MenuDetailClient({ code }: { code: string }) {
       const mapped = mapDbMenu(data)
       setMenu(mapped)
 
-      // 필수 옵션그룹의 첫 번째 항목 자동 선택
-      const initial: Record<number, string[]> = {}
-      mapped.options.forEach((group, idx) => {
-        if (group.required && group.items.length > 0) {
-          const first = group.items.find(it => !it.isSoldOut) ?? group.items[0]
-          initial[idx] = [first.id]
-        }
-      })
-      if (Object.keys(initial).length > 0) setSelectedMap(initial)
+      // 편집 모드: 장바구니의 기존 옵션·수량 복원
+      const editingItem = editCartId ? items.find(i => i.cartId === editCartId) : null
+      if (editingItem) {
+        setQty(editingItem.qty)
+        const restored: Record<number, string[]> = {}
+        editingItem.selectedOptions.forEach(opt => {
+          if (!restored[opt.optionGroupIndex]) restored[opt.optionGroupIndex] = []
+          restored[opt.optionGroupIndex].push(opt.optionId)
+        })
+        setSelectedMap(restored)
+      } else {
+        // 신규 담기: 필수 옵션그룹의 첫 번째 항목 자동 선택
+        const initial: Record<number, string[]> = {}
+        mapped.options.forEach((group, idx) => {
+          if (group.required && group.items.length > 0) {
+            const first = group.items.find(it => !it.isSoldOut) ?? group.items[0]
+            initial[idx] = [first.id]
+          }
+        })
+        if (Object.keys(initial).length > 0) setSelectedMap(initial)
+      }
 
       setLoading(false)
     }
@@ -159,8 +173,13 @@ export default function MenuDetailClient({ code }: { code: string }) {
       return
     }
 
-    addItem(menu.code, menu.name, menu.price, qty, selectedOptions, menu.imageUrl)
-    router.push('/menu')
+    if (editCartId) {
+      updateItem(editCartId, qty, selectedOptions)
+      router.push('/cart')
+    } else {
+      addItem(menu.code, menu.name, menu.price, qty, selectedOptions, menu.imageUrl)
+      router.push('/menu')
+    }
   }
 
   return (
@@ -244,14 +263,12 @@ export default function MenuDetailClient({ code }: { code: string }) {
       >
         {account && (
           <div className="flex items-center justify-between mb-3 text-[12px]">
-            <span className="text-[#727272]">결제 후 잔액</span>
+            <span className="text-[#727272]">선결제 잔액</span>
             <span className={[
               'font-bold',
-              afterBalance < 0 ? 'text-[#C92A2A]' : afterBalance < 30000 ? 'text-[#C92A2A]' : 'text-[#017333]',
+              account.balance < 0 ? 'text-[#C92A2A]' : account.balance < 30000 ? 'text-[#C92A2A]' : 'text-[#017333]',
             ].join(' ')}>
-              {afterBalance < 0
-                ? `−${formatWon(Math.abs(afterBalance))} (다음 충전 시 정산)`
-                : formatWon(afterBalance)}
+              {formatWon(account.balance)}
             </span>
           </div>
         )}
@@ -260,7 +277,7 @@ export default function MenuDetailClient({ code }: { code: string }) {
           onClick={handleAddToCart}
           className="w-full py-[17px] bg-[#1E1E1E] text-white rounded-xl text-base font-bold flex items-center justify-center gap-2 active:scale-95 transition-transform"
         >
-          <span>담기</span>
+          <span>{editCartId ? '변경하기' : '담기'}</span>
           <span className="font-bold">{formatWon(subtotal)}</span>
         </button>
       </div>
