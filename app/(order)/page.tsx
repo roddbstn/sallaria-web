@@ -51,7 +51,8 @@ function HomePageInner() {
   const [pinError, setPinError] = useState('')
   const [isShaking, setIsShaking] = useState(false)
   const [verifying, setVerifying] = useState(false)
-  const [storeName, setStoreName] = useState('샐러리아')
+  const [storeName,     setStoreName]     = useState('')
+  const [storeNotFound, setStoreNotFound] = useState(false)
   const [qrAccountCode, setQrAccountCode] = useState<string | null>(null)
 
   // URL에서 매장 구분자 추출 (?store={storeId})
@@ -62,18 +63,21 @@ function HomePageInner() {
   const [historyLoading, setHistoryLoading] = useState(false)
   const [historyList,    setHistoryList]    = useState<OrderHistoryWithStatus[]>([])
 
-  // 스토어명 로딩 — storeId 있으면 해당 매장, 없으면 첫 번째 (구버전 QR 호환)
+  // 스토어명 로딩 — storeId 필수. 없으면 에러 상태
   useEffect(() => {
     async function loadStoreName() {
-      const supabase = getSupabaseClient()
-      let query = supabase.from('stores').select('name')
-      if (storeId) {
-        query = query.eq('id', storeId)
-      } else {
-        query = query.limit(1)
+      if (!storeId) {
+        setStoreNotFound(true)
+        return
       }
-      const { data } = await query.maybeSingle()
-      if (data?.name) setStoreName(data.name)
+      const supabase = getSupabaseClient()
+      const { data } = await supabase.from('stores').select('name').eq('id', storeId).maybeSingle()
+      if (data?.name) {
+        setStoreName(data.name)
+        document.title = `${data.name} · 선결제 주문`
+      } else {
+        setStoreNotFound(true)
+      }
     }
     loadStoreName()
   }, [storeId])
@@ -215,6 +219,19 @@ function HomePageInner() {
     }
   }, [pin, isLocked, verifying, verifyPin])
 
+  // ── QR 코드 없이 직접 접속 ──
+  if (storeNotFound) {
+    return (
+      <div className="flex flex-col items-center justify-center min-h-screen px-8 text-center bg-white">
+        <div className="text-5xl mb-6">📷</div>
+        <h2 className="text-[18px] font-bold text-[#1E1E1E] mb-3">매장 QR 코드를 스캔해 주세요</h2>
+        <p className="text-[14px] text-[#727272] leading-relaxed">
+          매장에 부착된 QR 코드를 스캔하면<br />해당 매장의 선결제 주문 화면으로 이동합니다.
+        </p>
+      </div>
+    )
+  }
+
   // ── 잠김 화면 ──
   if (isLocked) {
     return (
@@ -236,6 +253,15 @@ function HomePageInner() {
     ['7', '8', '9'],
     ['', '0', 'del'],
   ]
+
+  // ── 매장명 로딩 중 ──
+  if (!storeName) {
+    return (
+      <div className="flex items-center justify-center min-h-screen bg-white">
+        <div className="w-8 h-8 rounded-full border-2 border-[#D7D7D7] border-t-[#017333] animate-spin" />
+      </div>
+    )
+  }
 
   return (
     <div className="flex flex-col min-h-screen bg-white">

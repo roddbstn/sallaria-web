@@ -2,8 +2,8 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "샐러리아 침산점 · 선결제 주문",
-  description: "샐러리아 침산점 선결제 주문 시스템",
+  title: "선결제 주문",
+  description: "선결제 주문 시스템",
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
