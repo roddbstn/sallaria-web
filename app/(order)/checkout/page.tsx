@@ -83,6 +83,12 @@ export default function CheckoutPage() {
 
     // sessionStorage에 주문 정보 저장 후 성공 화면으로 이동하는 헬퍼
     function saveAndRedirect(orderCode: string, orderNumber?: string) {
+      // 이전 주문의 POS 상태값 완전 초기화 — 남아있으면 새 주문 success 페이지가 오염됨
+      sessionStorage.removeItem('last_order_accepted_at')
+      sessionStorage.removeItem('last_order_total_seconds')
+      sessionStorage.removeItem('last_order_rejected')
+      sessionStorage.removeItem('last_order_rej_reason')
+
       sessionStorage.setItem('last_order_code', orderCode)
       sessionStorage.setItem('last_order_number', orderNumber ?? orderCode)
       sessionStorage.setItem('last_order_method', method!)
@@ -92,6 +98,22 @@ export default function CheckoutPage() {
       sessionStorage.setItem('last_order_account', account!.name)
       sessionStorage.setItem('last_order_items', JSON.stringify(items))
       sessionStorage.setItem('last_order_balance_after', String(afterBalance))
+
+      // localStorage에 주문 이력 저장 (내 주문 기능용 — QR 재스캔 후에도 조회 가능)
+      try {
+        const prev = JSON.parse(localStorage.getItem('sallaria_order_history') ?? '[]')
+        const entry = {
+          order_code:   orderCode,
+          order_number: orderNumber ?? orderCode,
+          account_name: account!.name,
+          orderer_name: finalOrderer,
+          ordered_at:   new Date().toISOString(),
+          total_amount: total,
+          method:       method!,
+        }
+        localStorage.setItem('sallaria_order_history', JSON.stringify([entry, ...prev].slice(0, 20)))
+      } catch { /* ignore */ }
+
       clearCart()
       router.push('/success')
     }
@@ -112,19 +134,18 @@ export default function CheckoutPage() {
       const supabase = getSupabaseClient()
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const { data, error: rpcError } = await (supabase as any).rpc('create_order', {
-        p_account_code: account.code,
-        p_orderer_name: finalOrderer,
-        p_method:       method,
-        p_items:        payload,
-        p_delivery_fee: method === '배달' ? DELIVERY_FEE : 0,
-        p_note:         remarks || null,
+        p_account_code:  account.code,
+        p_orderer_name:  finalOrderer,
+        p_orderer_phone: finalPhone,
+        p_method:        method,
+        p_items:         payload,
+        p_delivery_fee:  method === '배달' ? DELIVERY_FEE : 0,
+        p_note:          remarks || null,
       })
 
       if (rpcError || !data) {
-        // Supabase 미연결 시 MOCK fallback
-        console.warn('[checkout] Supabase unavailable, using mock:', rpcError)
-        const mockId = `MOCK-${Date.now()}`
-        saveAndRedirect(mockId, mockId)
+        console.error('[checkout] RPC error:', rpcError)
+        setError('주문 처리에 실패했습니다. 다시 시도해주세요.')
         return
       }
 
@@ -132,9 +153,8 @@ export default function CheckoutPage() {
       const result = data as { order_code: string; order_number: string }
       saveAndRedirect(result.order_code, result.order_number)
     } catch (err) {
-      console.error('[checkout] unexpected error, using mock:', err)
-      const mockId = `MOCK-${Date.now()}`
-      saveAndRedirect(mockId, mockId)
+      console.error('[checkout] unexpected error:', err)
+      setError('주문 처리에 실패했습니다. 다시 시도해주세요.')
     } finally {
       setIsSubmitting(false)
     }

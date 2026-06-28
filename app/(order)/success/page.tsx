@@ -1,7 +1,7 @@
 'use client'
 
-import { useEffect, useRef, useState } from 'react'
-import { useRouter } from 'next/navigation'
+import { Suspense, useEffect, useRef, useState } from 'react'
+import { useRouter, useSearchParams } from 'next/navigation'
 import { useSessionStore } from '@/lib/store/session'
 import { getSupabaseClient } from '@/lib/supabase/client'
 import { formatWon } from '@/lib/utils'
@@ -16,7 +16,16 @@ function formatTime(s: number): string {
 }
 
 export default function SuccessPage() {
+  return (
+    <Suspense>
+      <SuccessPageInner />
+    </Suspense>
+  )
+}
+
+function SuccessPageInner() {
   const router = useRouter()
+  const searchParams = useSearchParams()
   const { account } = useSessionStore()
 
   const [status,           setStatus]           = useState<OrderResultStatus>('pending')
@@ -69,16 +78,134 @@ export default function SuccessPage() {
 
   // ── 세션 + Realtime ────────────────────────────────────────────────────
   useEffect(() => {
-    const code    = sessionStorage.getItem('last_order_code')
-    const num     = sessionStorage.getItem('last_order_number')
-    const method  = sessionStorage.getItem('last_order_method') ?? ''
-    const total   = Number(sessionStorage.getItem('last_order_total') ?? '0')
-    const orderer = sessionStorage.getItem('last_order_orderer') ?? ''
-    const phone   = sessionStorage.getItem('last_order_phone') ?? ''
-    const acct    = sessionStorage.getItem('last_order_account') ?? ''
+    const sessionCode = sessionStorage.getItem('last_order_code')
+    const urlCode     = searchParams.get('code')
+    const code        = sessionCode ?? urlCode
 
     if (!code) { router.replace('/'); return }
 
+    // ── 공통: DB 상태 조회 + Realtime 구독 ──
+    function setupRealtimeAndStatus(orderCode: string) {
+      const supabase = getSupabaseClient()
+
+      supabase
+        .from('orders')
+        .select('status, note')
+        .eq('order_code', orderCode)
+        .maybeSingle()
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        .then(({ data }: { data: any }) => {
+          if (!data) return
+          if (data.status === '조리중' || data.status === '완료') {
+            setStatus('accepted')
+            setAcceptedAt(prev => {
+              if (prev) return prev
+              const now = Date.now()
+              sessionStorage.setItem('last_order_accepted_at', String(now))
+              return now
+            })
+            if (data.status === '완료') setPosCompleted(true)
+          } else if (data.status === '취소') {
+            const reason = data.note ?? '점주가 주문을 거부했습니다.'
+            setStatus('rejected')
+            setRejectedReason(reason)
+            sessionStorage.setItem('last_order_rejected', '1')
+            sessionStorage.setItem('last_order_rej_reason', reason)
+          }
+        })
+
+      try {
+        const channel = supabase
+          .channel(`orders:order_code=${orderCode}`)
+          .on(
+            'postgres_changes',
+            { event: 'UPDATE', schema: 'public', table: 'orders', filter: `order_code=eq.${orderCode}` },
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            (payload: any) => {
+              const s = payload.new?.status
+              if (s === '조리중') {
+                const now = Date.now()
+                setStatus('accepted')
+                setAcceptedAt(prev => { if (prev) return prev; sessionStorage.setItem('last_order_accepted_at', String(now)); return now })
+              } else if (s === '완료') {
+                setStatus('accepted')
+                setAcceptedAt(prev => { if (prev) return prev; const now = Date.now(); sessionStorage.setItem('last_order_accepted_at', String(now)); return now })
+                setPosCompleted(true)
+              } else if (s === '취소') {
+                const reason = payload.new?.note ?? '점주가 주문을 거부했습니다.'
+                setStatus('rejected')
+                setRejectedReason(reason)
+                sessionStorage.setItem('last_order_rejected', '1')
+                sessionStorage.setItem('last_order_rej_reason', reason)
+              }
+            }
+          )
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          .on('broadcast', { event: 'ORDER_ACCEPTED' }, ({ payload }: { payload: any }) => {
+            const now  = Date.now()
+            const mins = payload?.estimated_minutes ?? null
+            setStatus('accepted')
+            setAcceptedAt(prev => { if (prev) return prev; sessionStorage.setItem('last_order_accepted_at', String(now)); return now })
+            if (mins && mins > 0) {
+              setTotalSeconds(mins * 60)
+              setSecondsLeft(mins * 60)
+              sessionStorage.setItem('last_order_total_seconds', String(mins * 60))
+            }
+          })
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          .on('broadcast', { event: 'ORDER_REJECTED' }, ({ payload }: { payload: any }) => {
+            const reason = payload?.reason ?? '점주가 주문을 거부했습니다.'
+            setStatus('rejected')
+            setRejectedReason(reason)
+            sessionStorage.setItem('last_order_rejected', '1')
+            sessionStorage.setItem('last_order_rej_reason', reason)
+          })
+          .subscribe()
+        channelRef.current = channel
+      } catch (err) {
+        console.error('[success] Realtime 연결 오류:', err)
+        setTimeout(() => {
+          const now = Date.now()
+          setStatus('accepted')
+          setAcceptedAt(now)
+          sessionStorage.setItem('last_order_accepted_at', String(now))
+        }, 10_000)
+      }
+    }
+
+    // ── URL param으로 접근 (QR 재스캔 후 '내 주문'에서 진입) ──
+    if (!sessionCode && urlCode) {
+      setOrderCode(urlCode)
+      const supabase = getSupabaseClient()
+      supabase
+        .from('orders')
+        .select('order_number, orderer_name, orderer_phone, method, total_amount, balance_after, accounts ( account_name )')
+        .eq('order_code', urlCode)
+        .maybeSingle()
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        .then(({ data }: { data: any }) => {
+          if (!data) return
+          setOrderNumber(data.order_number ?? urlCode)
+          setOrderMethod(data.method ?? '')
+          setOrderTotal(data.total_amount ?? 0)
+          setOrderOrderer(data.orderer_name ?? '')
+          setOrderPhone(data.orderer_phone ?? '')
+          setOrderAccount((data.accounts as any)?.account_name ?? '')
+          if (data.balance_after !== null) setOrderBalanceAfter(data.balance_after)
+        })
+      setupRealtimeAndStatus(urlCode)
+      return () => {
+        try { if (channelRef.current) getSupabaseClient().removeChannel(channelRef.current) } catch { /* ignore */ }
+      }
+    }
+
+    // ── 일반 세션 경로 (sessionStorage에서 읽기) ──
+    const num            = sessionStorage.getItem('last_order_number')
+    const method         = sessionStorage.getItem('last_order_method') ?? ''
+    const total          = Number(sessionStorage.getItem('last_order_total') ?? '0')
+    const orderer        = sessionStorage.getItem('last_order_orderer') ?? ''
+    const phone          = sessionStorage.getItem('last_order_phone') ?? ''
+    const acct           = sessionStorage.getItem('last_order_account') ?? ''
     const balanceAfterRaw = sessionStorage.getItem('last_order_balance_after')
 
     setOrderCode(code)
@@ -98,7 +225,7 @@ export default function SuccessPage() {
       return
     }
 
-    // ── 새로고침 복원: 이전에 저장된 acceptedAt / totalSeconds 확인 ──
+    // 새로고침 복원
     const savedAcceptedAt   = sessionStorage.getItem('last_order_accepted_at')
     const savedTotalSeconds = sessionStorage.getItem('last_order_total_seconds')
     const savedRejected     = sessionStorage.getItem('last_order_rejected')
@@ -121,112 +248,14 @@ export default function SuccessPage() {
       }
     }
 
-    // ── 현재 DB 상태 즉시 조회 (새로고침 시 놓친 이벤트 복구) ──
-    const supabase = getSupabaseClient()
-    supabase
-      .from('orders')
-      .select('status, note')
-      .eq('order_code', code)
-      .maybeSingle()
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      .then(({ data }: { data: any }) => {
-        if (!data) return
-        if (data.status === '조리중' || data.status === '완료') {
-          setStatus('accepted')
-          setAcceptedAt(prev => {
-            if (prev) return prev
-            const now = Date.now()
-            sessionStorage.setItem('last_order_accepted_at', String(now))
-            return now
-          })
-          if (data.status === '완료') setPosCompleted(true)
-        } else if (data.status === '취소') {
-          const reason = data.note ?? '점주가 주문을 거부했습니다.'
-          setStatus('rejected')
-          setRejectedReason(reason)
-          sessionStorage.setItem('last_order_rejected', '1')
-          sessionStorage.setItem('last_order_rej_reason', reason)
-        }
-      })
-
-    try {
-      const channel = supabase
-        .channel(`orders:order_code=${code}`)
-        .on(
-          'postgres_changes',
-          { event: 'UPDATE', schema: 'public', table: 'orders', filter: `order_code=eq.${code}` },
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          (payload: any) => {
-            const s = payload.new?.status
-            if (s === '조리중') {
-              const now = Date.now()
-              setStatus('accepted')
-              setAcceptedAt(prev => {
-                if (prev) return prev
-                sessionStorage.setItem('last_order_accepted_at', String(now))
-                return now
-              })
-            } else if (s === '완료') {
-              setStatus('accepted')
-              setAcceptedAt(prev => {
-                if (prev) return prev
-                const now = Date.now()
-                sessionStorage.setItem('last_order_accepted_at', String(now))
-                return now
-              })
-              setPosCompleted(true)
-            } else if (s === '취소') {
-              const reason = payload.new?.note ?? '점주가 주문을 거부했습니다.'
-              setStatus('rejected')
-              setRejectedReason(reason)
-              sessionStorage.setItem('last_order_rejected', '1')
-              sessionStorage.setItem('last_order_rej_reason', reason)
-            }
-          }
-        )
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        .on('broadcast', { event: 'ORDER_ACCEPTED' }, ({ payload }: { payload: any }) => {
-          const now  = Date.now()
-          const mins = payload?.estimated_minutes ?? null
-          setStatus('accepted')
-          setAcceptedAt(prev => {
-            if (prev) return prev
-            sessionStorage.setItem('last_order_accepted_at', String(now))
-            return now
-          })
-          if (mins && mins > 0) {
-            setTotalSeconds(mins * 60)
-            setSecondsLeft(mins * 60)
-            sessionStorage.setItem('last_order_total_seconds', String(mins * 60))
-          }
-        })
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        .on('broadcast', { event: 'ORDER_REJECTED' }, ({ payload }: { payload: any }) => {
-          const reason = payload?.reason ?? '점주가 주문을 거부했습니다.'
-          setStatus('rejected')
-          setRejectedReason(reason)
-          sessionStorage.setItem('last_order_rejected', '1')
-          sessionStorage.setItem('last_order_rej_reason', reason)
-        })
-        .subscribe()
-
-      channelRef.current = channel
-    } catch (err) {
-      console.error('[success] Realtime 연결 오류:', err)
-      setTimeout(() => {
-        const now = Date.now()
-        setStatus('accepted')
-        setAcceptedAt(now)
-        sessionStorage.setItem('last_order_accepted_at', String(now))
-      }, 10_000)
-    }
+    setupRealtimeAndStatus(code)
 
     return () => {
       try {
-        if (channelRef.current) supabase.removeChannel(channelRef.current)
+        if (channelRef.current) getSupabaseClient().removeChannel(channelRef.current)
       } catch { /* ignore */ }
     }
-  }, [router])
+  }, [router, searchParams])
 
   // ── 타이머 카운트다운 ──────────────────────────────────────────────────
   useEffect(() => {

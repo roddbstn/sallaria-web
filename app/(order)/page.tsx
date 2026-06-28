@@ -5,7 +5,23 @@ import { useRouter, useSearchParams } from 'next/navigation'
 import { useSessionStore } from '@/lib/store/session'
 import { useCartStore } from '@/lib/store/cart'
 import { getSupabaseClient } from '@/lib/supabase/client'
+import { formatWon } from '@/lib/utils'
 import type { Account } from '@/lib/types'
+
+// ── 내 주문 이력 타입 ──────────────────────────────────────────────────────────
+interface OrderHistoryEntry {
+  order_code:   string
+  order_number: string
+  account_name: string
+  orderer_name: string
+  ordered_at:   string
+  total_amount: number
+  method:       string
+}
+
+interface OrderHistoryWithStatus extends OrderHistoryEntry {
+  status: string | null   // DB에서 조회한 현재 상태
+}
 
 const PIN_LOCK_LIMIT = 5
 
@@ -36,8 +52,12 @@ function HomePageInner() {
   const [isShaking, setIsShaking] = useState(false)
   const [verifying, setVerifying] = useState(false)
   const [storeName, setStoreName] = useState('샐러리아')
-  // QR로 거래처가 특정된 경우 해당 account_code 저장
   const [qrAccountCode, setQrAccountCode] = useState<string | null>(null)
+
+  // 내 주문 모달
+  const [showHistory,    setShowHistory]    = useState(false)
+  const [historyLoading, setHistoryLoading] = useState(false)
+  const [historyList,    setHistoryList]    = useState<OrderHistoryWithStatus[]>([])
 
   // 스토어명 로딩 (PIN 화면에 표시)
   useEffect(() => {
@@ -80,6 +100,29 @@ function HomePageInner() {
     loadByQr()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
+
+  async function openHistory() {
+    setShowHistory(true)
+    setHistoryLoading(true)
+    try {
+      const raw: OrderHistoryEntry[] = JSON.parse(localStorage.getItem('sallaria_order_history') ?? '[]')
+      if (raw.length === 0) { setHistoryList([]); return }
+
+      const supabase = getSupabaseClient()
+      const codes = raw.map(e => e.order_code)
+      const { data } = await supabase
+        .from('orders')
+        .select('order_code, status')
+        .in('order_code', codes)
+
+      const statusMap: Record<string, string> = {}
+      ;(data ?? []).forEach((r: { order_code: string; status: string }) => { statusMap[r.order_code] = r.status })
+
+      setHistoryList(raw.map(e => ({ ...e, status: statusMap[e.order_code] ?? null })))
+    } finally {
+      setHistoryLoading(false)
+    }
+  }
 
   const isLocked = pinLocked || pinAttempts >= PIN_LOCK_LIMIT
 
@@ -263,7 +306,97 @@ function HomePageInner() {
         </div>
       </div>
 
-      <div className="h-8" />
+      {/* 내 주문 확인 버튼 */}
+      <div className="pb-8 pt-2 flex justify-center">
+        <button
+          onClick={openHistory}
+          className="text-[13px] text-[#727272] underline underline-offset-2"
+        >
+          내 주문 확인
+        </button>
+      </div>
+
+      {/* 내 주문 모달 */}
+      {showHistory && (
+        <div
+          className="fixed inset-0 z-50 flex flex-col justify-end bg-black/40"
+          onClick={() => setShowHistory(false)}
+        >
+          <div
+            className="bg-white rounded-t-3xl max-h-[75vh] flex flex-col"
+            onClick={e => e.stopPropagation()}
+          >
+            {/* 핸들 */}
+            <div className="flex justify-center pt-3 pb-1">
+              <div className="w-10 h-1 rounded-full bg-[#D7D7D7]" />
+            </div>
+
+            <div className="px-5 py-3 border-b border-[#F0F0F0] flex items-center justify-between">
+              <span className="text-[16px] font-bold text-[#1E1E1E]">내 주문 내역</span>
+              <button onClick={() => setShowHistory(false)} className="text-[#727272] text-[20px] leading-none">×</button>
+            </div>
+
+            <div className="flex-1 overflow-y-auto">
+              {historyLoading ? (
+                <div className="flex items-center justify-center py-12">
+                  <div className="w-8 h-8 rounded-full border-2 border-[#D7D7D7] border-t-[#017333] animate-spin" />
+                </div>
+              ) : historyList.length === 0 ? (
+                <div className="flex flex-col items-center justify-center py-12 text-[#727272]">
+                  <span className="text-[36px] mb-3">📋</span>
+                  <p className="text-[14px]">이 기기에서 주문한 내역이 없어요</p>
+                </div>
+              ) : (
+                <div className="divide-y divide-[#F0F0F0]">
+                  {historyList.map(order => {
+                    const isActive = order.status === '주문완료' || order.status === '조리중'
+                    const dateStr  = new Date(order.ordered_at).toLocaleDateString('ko-KR', { month: 'long', day: 'numeric' })
+                    const timeStr  = new Date(order.ordered_at).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', hour12: false })
+                    const statusColor =
+                      order.status === '완료'    ? 'bg-[#E6F4EC] text-[#017333]' :
+                      order.status === '취소'    ? 'bg-red-50 text-[#C92A2A]'   :
+                      order.status === '조리중'  ? 'bg-orange-50 text-orange-600' :
+                      order.status === '주문완료' ? 'bg-blue-50 text-blue-600'   :
+                      'bg-[#F5F5F5] text-[#727272]'
+
+                    return (
+                      <div key={order.order_code} className="px-5 py-4">
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-2 mb-1">
+                              <span className="text-[13px] font-bold text-[#1E1E1E]">#{order.order_number}</span>
+                              {order.status && (
+                                <span className={`text-[11px] font-semibold px-2 py-0.5 rounded-full ${statusColor}`}>
+                                  {order.status}
+                                </span>
+                              )}
+                            </div>
+                            <p className="text-[12px] text-[#727272] truncate">
+                              {order.account_name} · {order.orderer_name} · {order.method}
+                            </p>
+                            <p className="text-[11px] text-[#AAAAAA] mt-0.5">{dateStr} {timeStr}</p>
+                          </div>
+                          <div className="flex flex-col items-end gap-2 flex-shrink-0">
+                            <span className="text-[14px] font-bold text-[#1E1E1E]">{formatWon(order.total_amount)}</span>
+                            {isActive && (
+                              <button
+                                onClick={() => { setShowHistory(false); router.push(`/success?code=${order.order_code}`) }}
+                                className="text-[12px] font-bold text-white bg-[#017333] px-3 py-1.5 rounded-xl"
+                              >
+                                진행 확인 →
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    )
+                  })}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
