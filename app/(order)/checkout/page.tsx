@@ -27,7 +27,7 @@ export default function CheckoutPage() {
     totalAmount,
     clearCart,
   } = useCartStore()
-  const { account, setOrderer, setPhone } = useSessionStore()
+  const { account, setAccount, setOrderer, setPhone } = useSessionStore()
 
   const [ordererName, setOrdererName] = useState('')
   const [phoneNumber, setPhoneNumber] = useState('')
@@ -114,6 +114,8 @@ export default function CheckoutPage() {
         localStorage.setItem('sallaria_order_history', JSON.stringify([entry, ...prev].slice(0, 20)))
       } catch { /* ignore */ }
 
+      // 세션 잔액 갱신 (메뉴로 돌아와도 차감된 잔액 표시)
+      setAccount({ ...account!, balance: afterBalance })
       clearCart()
       router.push('/success')
     }
