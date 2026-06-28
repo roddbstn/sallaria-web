@@ -54,20 +54,29 @@ function HomePageInner() {
   const [storeName, setStoreName] = useState('샐러리아')
   const [qrAccountCode, setQrAccountCode] = useState<string | null>(null)
 
+  // URL에서 매장 구분자 추출 (?store={storeId})
+  const storeId = searchParams.get('store') ?? undefined
+
   // 내 주문 모달
   const [showHistory,    setShowHistory]    = useState(false)
   const [historyLoading, setHistoryLoading] = useState(false)
   const [historyList,    setHistoryList]    = useState<OrderHistoryWithStatus[]>([])
 
-  // 스토어명 로딩 (PIN 화면에 표시)
+  // 스토어명 로딩 — storeId 있으면 해당 매장, 없으면 첫 번째 (구버전 QR 호환)
   useEffect(() => {
     async function loadStoreName() {
       const supabase = getSupabaseClient()
-      const { data } = await supabase.from('stores').select('name').limit(1).maybeSingle()
+      let query = supabase.from('stores').select('name')
+      if (storeId) {
+        query = query.eq('id', storeId)
+      } else {
+        query = query.limit(1)
+      }
+      const { data } = await query.maybeSingle()
       if (data?.name) setStoreName(data.name)
     }
     loadStoreName()
-  }, [])
+  }, [storeId])
 
   // 세션 초기화 + 거래처 고유 QR 처리 (?account=코드)
   useEffect(() => {
@@ -146,6 +155,8 @@ function HomePageInner() {
 
       if (qrAccountCode) {
         query = query.eq('account_code', qrAccountCode)
+      } else if (storeId) {
+        query = query.eq('store_id', storeId)
       }
 
       const { data, error } = await query.maybeSingle()
@@ -184,7 +195,7 @@ function HomePageInner() {
     } finally {
       setVerifying(false)
     }
-  }, [pinAttempts, incrementPinAttempts, lockPin, setAccount, triggerShake, verifying, router, storeName, qrAccountCode])
+  }, [pinAttempts, incrementPinAttempts, lockPin, setAccount, triggerShake, verifying, router, storeName, qrAccountCode, storeId])
 
   const handleNumpad = useCallback((val: string) => {
     if (isLocked || verifying) return
