@@ -31,6 +31,8 @@ export default function CheckoutPage() {
 
   const [ordererName, setOrdererName] = useState('')
   const [phoneNumber, setPhoneNumber] = useState('')
+  const [deliveryAddress, setDeliveryAddress] = useState('')
+  const [deliveryRemarks, setDeliveryRemarks] = useState('')
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -73,6 +75,7 @@ export default function CheckoutPage() {
   async function handleOrder() {
     if (!account || !method || items.length === 0) return
     if (!isPersonal && (!ordererName.trim() || !isPhoneValid)) return
+    if (method === '배달' && !deliveryAddress.trim()) return
     setIsSubmitting(true)
     setError(null)
 
@@ -142,7 +145,13 @@ export default function CheckoutPage() {
         p_method:        method,
         p_items:         payload,
         p_delivery_fee:  method === '배달' ? DELIVERY_FEE : 0,
-        p_note:          remarks || null,
+        p_note: (() => {
+          const parts: string[] = []
+          if (method === '배달' && deliveryAddress.trim()) parts.push(`[배달주소] ${deliveryAddress.trim()}`)
+          if (method === '배달' && deliveryRemarks.trim()) parts.push(`[배달요청] ${deliveryRemarks.trim()}`)
+          if (remarks.trim()) parts.push(remarks.trim())
+          return parts.length > 0 ? parts.join(' / ') : null
+        })(),
       })
 
       if (rpcError || !data) {
@@ -248,6 +257,36 @@ export default function CheckoutPage() {
             ))}
           </div>
         </section>
+
+        {/* 배달 주소 + 배달 요청사항 (배달 선택 시에만) */}
+        {method === '배달' && (
+          <section className="space-y-3">
+            <div>
+              <label className="text-sm font-bold text-[#1E1E1E] mb-2 block">
+                배달 주소 <span className="text-[#C92A2A]">*</span>
+              </label>
+              <input
+                type="text"
+                value={deliveryAddress}
+                onChange={e => setDeliveryAddress(e.target.value)}
+                placeholder="예: 대구 북구 침산동 123-45, 2층"
+                maxLength={100}
+                className="w-full border border-[#D7D7D7] rounded-xl px-4 py-3 text-sm text-[#1E1E1E] placeholder:text-[#D7D7D7] outline-none focus:border-[#1E1E1E] transition-colors"
+              />
+            </div>
+            <div>
+              <label className="text-sm font-bold text-[#1E1E1E] mb-2 block">배달 요청사항</label>
+              <input
+                type="text"
+                value={deliveryRemarks}
+                onChange={e => setDeliveryRemarks(e.target.value)}
+                placeholder="예: 문 앞에 놓아주세요"
+                maxLength={100}
+                className="w-full border border-[#D7D7D7] rounded-xl px-4 py-3 text-sm text-[#1E1E1E] placeholder:text-[#D7D7D7] outline-none focus:border-[#1E1E1E] transition-colors"
+              />
+            </div>
+          </section>
+        )}
 
         {/* 가게 요청사항 */}
         <section>
@@ -360,9 +399,9 @@ export default function CheckoutPage() {
       <footer className="flex-shrink-0 px-4 py-4 border-t border-[#D7D7D7] bg-white shadow-[0_-4px_20px_rgba(0,0,0,0.08)]">
         <button
           onClick={handleOrder}
-          disabled={isSubmitting || !method || (!isPersonal && (!ordererName.trim() || !isPhoneValid))}
+          disabled={isSubmitting || !method || (!isPersonal && (!ordererName.trim() || !isPhoneValid)) || (method === '배달' && !deliveryAddress.trim())}
           className={`w-full py-4 rounded-xl font-bold text-white text-base transition-colors ${
-            isSubmitting || !method || (!isPersonal && (!ordererName.trim() || !isPhoneValid)) ? 'bg-[#CCC] cursor-not-allowed' : 'bg-[#1E1E1E] active:scale-95'
+            isSubmitting || !method || (!isPersonal && (!ordererName.trim() || !isPhoneValid)) || (method === '배달' && !deliveryAddress.trim()) ? 'bg-[#CCC] cursor-not-allowed' : 'bg-[#1E1E1E] active:scale-95'
           }`}
         >
           {isSubmitting ? '주문 중...' : '주문하기'}

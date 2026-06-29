@@ -189,17 +189,18 @@ function MenuPageInner() {
     const container = scrollRef.current
     if (!container) return
 
-    // 탭바 실제 높이(~60px) 기준: 섹션 top이 이 값 이하로 오면 해당 카테고리 활성화
-    const TABS_H = 60
-
     function spy() {
       if (isScrollingToRef.current) return
-      const containerTop = container!.getBoundingClientRect().top
+      // 탭바 하단 좌표 (뷰포트 기준) — 구분선 top과 직접 비교
+      const tabsEl = tabsRef.current
+      if (!tabsEl) return
+      const tabsBottom = tabsEl.getBoundingClientRect().bottom
       let active = categories[0].id
       for (const cat of categories) {
         const el = sectionRefs.current[cat.id]
         if (!el) continue
-        if (el.getBoundingClientRect().top - containerTop <= TABS_H) {
+        // 회색 구분선(separator) top이 탭바 bottom에 닿거나 올라오면 해당 카테고리 활성화
+        if (el.getBoundingClientRect().top <= tabsBottom) {
           active = cat.id
         }
       }
@@ -234,10 +235,10 @@ function MenuPageInner() {
     setActiveCategory(catId)
     setShowDropdown(false)
 
-    const tabsHeight = 52
-    const containerTop = container.getBoundingClientRect().top
+    // 탭바 하단 기준으로 스크롤 위치 계산 — 구분선 top이 탭바 bottom에 정확히 닿도록
+    const tabsBottom = tabsRef.current?.getBoundingClientRect().bottom ?? 60
     const elTop = el.getBoundingClientRect().top
-    const scrollTop = container.scrollTop + (elTop - containerTop) - tabsHeight
+    const scrollTop = container.scrollTop + (elTop - tabsBottom)
     container.scrollTo({ top: scrollTop, behavior: 'smooth' })
     setTimeout(() => { isScrollingToRef.current = false }, 800)
   }, [])
@@ -327,15 +328,16 @@ function MenuPageInner() {
             </div>
             <button
               onClick={() => setShowDropdown(v => !v)}
-              className="flex-shrink-0 w-8 h-8 mr-4 bg-[#FAFAFA] border border-[#D7D7D7] rounded-full flex items-center justify-center text-[#727272]"
+              className="flex-shrink-0 w-10 h-10 mr-4 bg-[#FAFAFA] border border-[#D7D7D7] rounded-full flex items-center justify-center text-[#727272]"
               aria-label="전체 카테고리"
             >
-              <span
-                className="text-[14px] font-bold inline-block transition-transform duration-200"
-                style={{ transform: showDropdown ? 'rotate(-90deg)' : 'rotate(90deg)' }}
+              <svg
+                className="transition-transform duration-200"
+                style={{ transform: showDropdown ? 'rotate(-90deg)' : 'rotate(90deg)', width: 22, height: 22 }}
+                viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"
               >
-                ›
-              </span>
+                <polyline points="9 6 15 12 9 18" />
+              </svg>
             </button>
           </div>
 
@@ -348,11 +350,11 @@ function MenuPageInner() {
             if (catMenus.length === 0) return null
 
             return (
-              <div
-                key={cat.id}
-                ref={el => { sectionRefs.current[cat.id] = el }}
-              >
-                <div className="h-2 bg-[#F5F5F5] mt-2" />
+              <div key={cat.id}>
+                <div
+                  ref={el => { sectionRefs.current[cat.id] = el }}
+                  className="h-2 bg-[#F5F5F5] mt-2"
+                />
                 <div className="px-5 pt-5 pb-1">
                   <h2 className="text-[20px] font-bold text-[#1E1E1E]">{cat.name}</h2>
                 </div>
