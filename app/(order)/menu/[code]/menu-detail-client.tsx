@@ -181,7 +181,7 @@ export default function MenuDetailClient({ code }: { code: string }) {
       router.push('/cart')
     } else {
       addItem(menu.code, menu.name, menu.price, qty, selectedOptions, menu.imageUrl)
-      router.push('/menu')
+      router.back()
     }
   }
 

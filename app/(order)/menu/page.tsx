@@ -1,12 +1,13 @@
 'use client'
 
-import { useState, useEffect, useRef, useCallback } from 'react'
-import { useRouter } from 'next/navigation'
+import { useState, useEffect, useRef, useCallback, Suspense } from 'react'
+import { useRouter, useSearchParams } from 'next/navigation'
 import { useSessionStore } from '@/lib/store/session'
 import { useCartStore } from '@/lib/store/cart'
 import { getSupabaseClient } from '@/lib/supabase/client'
 import { formatWon } from '@/lib/utils'
 import MenuCard from '@/components/menu/menu-card'
+import MenuDetailClient from './[code]/menu-detail-client'
 import type { Category, Menu, MenuOptionGroup } from '@/lib/types'
 import type { RealtimeChannel } from '@supabase/supabase-js'
 
@@ -48,7 +49,17 @@ function mapDbMenu(row: any): Menu {
 }
 
 export default function MenuPage() {
+  return (
+    <Suspense>
+      <MenuPageInner />
+    </Suspense>
+  )
+}
+
+function MenuPageInner() {
   const router = useRouter()
+  const searchParams = useSearchParams()
+  const selectedItemCode = searchParams.get('item')
   const account = useSessionStore(s => s.account)
   const orderer = useSessionStore(s => s.orderer)
   const totalQty = useCartStore(s => s.totalQty)
@@ -375,7 +386,7 @@ export default function MenuPage() {
                     <MenuCard
                       key={menu.code}
                       menu={menu}
-                      onClick={() => router.push(`/menu/${menu.code}`)}
+                      onClick={() => router.push(`/menu?item=${menu.code}`)}
                     />
                   ))}
                 </div>
@@ -442,6 +453,15 @@ export default function MenuPage() {
             <span>장바구니 보기</span>
             <span>{formatWon(subtotal)}</span>
           </button>
+        </div>
+      )}
+
+      {/* 메뉴 상세 오버레이 — ?item=code 파라미터가 있을 때 표시 */}
+      {selectedItemCode && (
+        <div className="fixed inset-0 z-50 bg-white" style={{ paddingTop: 'env(safe-area-inset-top)' }}>
+          <Suspense>
+            <MenuDetailClient code={selectedItemCode} />
+          </Suspense>
         </div>
       )}
     </div>

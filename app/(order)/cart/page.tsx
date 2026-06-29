@@ -40,7 +40,7 @@ export default function CartPage() {
   function handleEditOption(cartId: string) {
     const item = items.find((i) => i.cartId === cartId)
     if (!item) return
-    router.push(`/menu/${item.menuCode}?edit=${cartId}`)
+    router.push(`/menu?item=${item.menuCode}&edit=${cartId}`)
   }
 
   const subtotal = totalSubtotal()
