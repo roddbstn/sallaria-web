@@ -72,6 +72,7 @@ function MenuPageInner() {
   const [showDropdown, setShowDropdown] = useState(false)
   const [showScrollTop, setShowScrollTop] = useState(false)
   const sectionRefs = useRef<Record<string, HTMLDivElement | null>>({})
+  const sentinelRefs = useRef<Record<string, HTMLDivElement | null>>({})  // 1px 스크롤 스파이용
   const tabButtonRefs = useRef<Record<string, HTMLButtonElement | null>>({})
   const tabsRef = useRef<HTMLDivElement>(null)
   const isScrollingToRef = useRef(false)
@@ -226,7 +227,7 @@ function MenuPageInner() {
     )
 
     for (const cat of categories) {
-      const el = sectionRefs.current[cat.id]
+      const el = sentinelRefs.current[cat.id]
       if (el) observer.observe(el)
     }
 
@@ -374,8 +375,13 @@ function MenuPageInner() {
               <div
                 key={cat.id}
                 ref={el => { sectionRefs.current[cat.id] = el }}
-                data-cat={cat.id}
               >
+                {/* 1px 센티넬 — IntersectionObserver가 이 점만 감시해 정확한 카테고리 감지 */}
+                <div
+                  ref={el => { sentinelRefs.current[cat.id] = el }}
+                  data-cat={cat.id}
+                  style={{ height: 1, marginBottom: -1 }}
+                />
                 <div className="h-2 bg-[#F5F5F5] mt-2" />
                 <div className="px-5 pt-5 pb-1">
                   <h2 className="text-[15px] font-bold text-[#1E1E1E]">{cat.name}</h2>
