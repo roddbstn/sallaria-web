@@ -76,6 +76,8 @@ function MenuPageInner() {
   const tabsRef = useRef<HTMLDivElement>(null)
   const isScrollingToRef = useRef(false)
   const scrollRef = useRef<HTMLDivElement>(null)  // 내부 스크롤 컨테이너
+  // 각 카테고리 섹션이 탭바 하단에 닿는 scrollTop 임계값 (로드 후 1회 계산)
+  const spyThresholds = useRef<{ id: string; threshold: number }[]>([])
 
   // hydration 완료 여부 추적
   const [hydrated, setHydrated] = useState(() => useSessionStore.persist.hasHydrated())
@@ -183,7 +185,32 @@ function MenuPageInner() {
     return () => el.removeEventListener('scroll', onScroll)
   }, [])
 
-  // 스크롤 스파이 — scroll event + getBoundingClientRect 로 현재 보이는 카테고리 탭 활성화
+  // 로드 완료 후 각 섹션의 절대 스크롤 임계값 계산 (1회)
+  // threshold = 해당 섹션 회색 구분선이 탭바 하단에 닿는 scrollTop 값
+  useEffect(() => {
+    if (loading || categories.length === 0) return
+    // DOM 렌더 완료 후 측정
+    requestAnimationFrame(() => {
+      const container = scrollRef.current
+      const tabsEl = tabsRef.current
+      if (!container || !tabsEl) return
+      const containerTop = container.getBoundingClientRect().top
+      const tabsH = tabsEl.offsetHeight
+
+      spyThresholds.current = categories
+        .map(cat => {
+          const el = sectionRefs.current[cat.id]
+          if (!el) return null
+          // 구분선의 절대 위치 = 현재 scrollTop + (뷰포트상 top - 컨테이너 top)
+          const absoluteTop = container.scrollTop + el.getBoundingClientRect().top - containerTop
+          // 이 값 이상으로 스크롤하면 구분선이 탭바 하단에 닿음
+          return { id: cat.id, threshold: absoluteTop - tabsH }
+        })
+        .filter((x): x is { id: string; threshold: number } => x !== null)
+    })
+  }, [loading, categories])
+
+  // 스크롤 스파이 — scrollTop과 사전계산된 임계값 비교 (간단하고 안정적)
   useEffect(() => {
     if (categories.length === 0) return
     const container = scrollRef.current
@@ -191,18 +218,11 @@ function MenuPageInner() {
 
     function spy() {
       if (isScrollingToRef.current) return
-      // 탭바 하단 좌표 (뷰포트 기준) — 구분선 top과 직접 비교
-      const tabsEl = tabsRef.current
-      if (!tabsEl) return
-      const tabsBottom = tabsEl.getBoundingClientRect().bottom
+      const scrollTop = container!.scrollTop
+      // 임계값을 넘은 카테고리 중 가장 마지막(=가장 아래) 것을 활성화
       let active = categories[0].id
-      for (const cat of categories) {
-        const el = sectionRefs.current[cat.id]
-        if (!el) continue
-        // 회색 구분선(separator) top이 탭바 bottom에 닿거나 올라오면 해당 카테고리 활성화
-        if (el.getBoundingClientRect().top <= tabsBottom) {
-          active = cat.id
-        }
+      for (const { id, threshold } of spyThresholds.current) {
+        if (scrollTop >= threshold) active = id
       }
       setActiveCategory(active)
     }
