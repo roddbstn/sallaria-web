@@ -147,9 +147,8 @@ function MenuPageInner() {
       }
 
       const cats: Category[] = catData.map((c: { id: string; name: string }) => ({ id: c.id, name: c.name }))
-      const allCats: Category[] = [{ id: '__popular__', name: '인기 메뉴' }, ...cats]
-      setCategories(allCats)
-      setActiveCategory(allCats[0].id)
+      setCategories(cats)
+      setActiveCategory(cats[0].id)
 
       const catIds = cats.map(c => c.id)
       const { data: menuData } = await supabase
