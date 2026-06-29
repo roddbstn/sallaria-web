@@ -57,22 +57,20 @@ export default function OptionGroup({
           }
 
           return (
-            <button
+            <div
               key={item.id}
-              type="button"
-              disabled={isSoldOut}
               onClick={() => !isSoldOut && onToggle(groupIndex, item.id)}
               className={[
-                'w-full flex items-center justify-between px-5 py-[13px] text-left',
-                'transition-colors hover:bg-[#FAFAFA]',
+                'w-full flex items-center justify-between px-5 py-[13px]',
                 isSoldOut ? 'opacity-40 cursor-not-allowed' : 'cursor-pointer',
               ].join(' ')}
             >
               <div className="flex items-center gap-3">
-                {/* 선택 인디케이터: 단일=원형, 복수=사각형 */}
+                {/* 선택 인디케이터: 단일=원형, 복수=사각형 — 이 부분만 눌림 인터랙션 */}
                 {group.multi ? (
                   <div className={[
                     'w-[20px] h-[20px] rounded-[4px] border-2 flex items-center justify-center flex-shrink-0',
+                    'transition-transform active:scale-90',
                     isSelected
                       ? 'bg-[#017333] border-[#017333]'
                       : 'border-[#D7D7D7]',
@@ -86,6 +84,7 @@ export default function OptionGroup({
                 ) : (
                   <div className={[
                     'w-[20px] h-[20px] rounded-full border-2 flex items-center justify-center flex-shrink-0',
+                    'transition-transform active:scale-90',
                     isSelected
                       ? 'border-[#017333]'
                       : 'border-[#D7D7D7]',
@@ -115,7 +114,7 @@ export default function OptionGroup({
                   {priceLabel}
                 </span>
               )}
-            </button>
+            </div>
           )
         })}
       </div>
