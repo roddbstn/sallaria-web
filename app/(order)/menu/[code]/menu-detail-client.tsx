@@ -186,7 +186,7 @@ export default function MenuDetailClient({ code }: { code: string }) {
   }
 
   return (
-    <div className="flex flex-col min-h-screen bg-white">
+    <div className="flex flex-col h-full bg-white">
       {/* ── 헤더 ── */}
       <div className="fixed top-0 left-0 right-0 z-10 bg-white border-b border-[#F0F0F0]" style={{ maxWidth: '430px', margin: '0 auto', paddingTop: 'env(safe-area-inset-top)' }}>
         <div className="flex items-center px-4 py-4 relative">
