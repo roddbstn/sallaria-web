@@ -61,8 +61,8 @@ export default function MenuPage() {
   const [showDropdown, setShowDropdown] = useState(false)
   const [showScrollTop, setShowScrollTop] = useState(false)
   const sectionRefs = useRef<Record<string, HTMLDivElement | null>>({})
+  const tabButtonRefs = useRef<Record<string, HTMLButtonElement | null>>({})
   const tabsRef = useRef<HTMLDivElement>(null)
-  const observerRef = useRef<IntersectionObserver | null>(null)
   const isScrollingToRef = useRef(false)
   const scrollRef = useRef<HTMLDivElement>(null)  // 내부 스크롤 컨테이너
 
@@ -173,29 +173,46 @@ export default function MenuPage() {
     return () => el.removeEventListener('scroll', onScroll)
   }, [])
 
-  // IntersectionObserver — root를 내부 스크롤 컨테이너로 설정
+  // 스크롤 스파이 — 뷰포트 기준으로 현재 보이는 섹션의 카테고리 탭 자동 활성화
   useEffect(() => {
-    if (categories.length === 0) return
     const container = scrollRef.current
-    observerRef.current = new IntersectionObserver(
-      (entries) => {
-        if (isScrollingToRef.current) return
-        entries.forEach(entry => {
-          if (entry.isIntersecting) {
-            const catId = entry.target.getAttribute('data-cat')
-            if (catId) setActiveCategory(catId)
-          }
-        })
-      },
-      { root: container, threshold: 0.3, rootMargin: '-60px 0px -60% 0px' }
-    )
+    if (!container || categories.length === 0) return
 
-    Object.values(sectionRefs.current).forEach(el => {
-      if (el) observerRef.current?.observe(el)
-    })
+    const TABS_OFFSET = 64  // sticky 탭바 높이 + 여유
 
-    return () => observerRef.current?.disconnect()
+    function spy() {
+      if (isScrollingToRef.current) return
+      const baseTop = container!.getBoundingClientRect().top + TABS_OFFSET
+      let current = categories[0].id
+      for (const cat of categories) {
+        const el = sectionRefs.current[cat.id]
+        if (!el) continue
+        if (el.getBoundingClientRect().top <= baseTop) {
+          current = cat.id
+        }
+      }
+      setActiveCategory(current)
+    }
+
+    container.addEventListener('scroll', spy, { passive: true })
+    return () => container.removeEventListener('scroll', spy)
   }, [categories])
+
+  // 활성 탭 자동 수평 스크롤 — 탭이 탭바 밖으로 나가면 따라옴
+  useEffect(() => {
+    const btn = tabButtonRefs.current[activeCategory]
+    const bar = tabsRef.current
+    if (!btn || !bar) return
+    const btnLeft  = btn.offsetLeft
+    const btnRight = btnLeft + btn.offsetWidth
+    const barLeft  = bar.scrollLeft
+    const barRight = barLeft + bar.offsetWidth
+    if (btnLeft < barLeft + 16) {
+      bar.scrollTo({ left: btnLeft - 16, behavior: 'smooth' })
+    } else if (btnRight > barRight - 16) {
+      bar.scrollTo({ left: btnRight - bar.offsetWidth + 16, behavior: 'smooth' })
+    }
+  }, [activeCategory])
 
   const scrollToCategory = useCallback((catId: string) => {
     const el = sectionRefs.current[catId]
@@ -282,6 +299,7 @@ export default function MenuPage() {
               {categories.map(cat => (
                 <button
                   key={cat.id}
+                  ref={el => { tabButtonRefs.current[cat.id] = el }}
                   onClick={() => scrollToCategory(cat.id)}
                   className={[
                     'flex-shrink-0 px-[18px] py-[9px] text-[14px] font-semibold transition-colors',
