@@ -45,9 +45,9 @@ export default function MenuCard({ menu, onClick }: MenuCardProps) {
             인기
           </span>
         )}
-        <p className="text-[15px] font-semibold text-[#1E1E1E] leading-snug">{menu.name}</p>
+        <p className="text-[16px] font-semibold text-[#1E1E1E] leading-snug">{menu.name}</p>
         <p className="text-[12px] text-[#727272] leading-snug line-clamp-2">{menu.desc}</p>
-        <p className="text-[15px] font-bold text-[#1E1E1E] mt-[2px]">{formatWon(menu.price)}</p>
+        <p className="text-[15px] font-medium text-[#1E1E1E] mt-[2px]">{formatWon(menu.price)}</p>
       </div>
     </div>
   )
