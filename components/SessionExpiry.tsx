@@ -13,6 +13,7 @@ export default function SessionExpiry() {
   const router   = useRouter()
   const pathname = usePathname()
   const loginAt      = useSessionStore(s => s.loginAt)
+  const account      = useSessionStore(s => s.account)
   const resetSession = useSessionStore(s => s.resetSession)
 
   useEffect(() => {
@@ -22,14 +23,16 @@ export default function SessionExpiry() {
     function check() {
       if (Date.now() - loginAt! > SESSION_MS) {
         resetSession()
-        router.replace('/?expired=1')
+        // ?store= 보존 — 없으면 루트 페이지가 storeNotFound 화면을 띄움
+        const storeId = account?.storeId
+        router.replace(storeId ? `/?store=${storeId}&expired=1` : '/?expired=1')
       }
     }
 
     check()  // 마운트 시 즉시 한 번 체크
     const id = setInterval(check, 10_000)  // 10초 간격
     return () => clearInterval(id)
-  }, [pathname, loginAt, resetSession, router])
+  }, [pathname, loginAt, account, resetSession, router])
 
   return null
 }
