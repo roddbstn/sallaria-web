@@ -107,8 +107,8 @@ export default function OptionGroup({
 
               {priceLabel && (
                 <span className={[
-                  'text-[13px] font-semibold flex-shrink-0',
-                  isSelected ? 'text-[#017333]' : 'text-[#727272]',
+                  'text-[13px] flex-shrink-0',
+                  isSelected ? 'font-semibold text-[#017333]' : 'font-normal text-[#ABABAB]',
                   showFinalPrice ? 'text-[14px]' : '',
                 ].join(' ')}>
                   {priceLabel}
