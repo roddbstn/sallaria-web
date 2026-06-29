@@ -211,8 +211,10 @@ function MenuPageInner() {
   }, [loading, categories])
 
   // 스크롤 스파이 — scrollTop과 사전계산된 임계값 비교 (간단하고 안정적)
+  // ※ loading도 deps에 포함: categories는 loading=true 시점에 세팅되므로
+  //   loading=false 후 scrollRef가 마운트된 뒤에 리스너가 달려야 함
   useEffect(() => {
-    if (categories.length === 0) return
+    if (loading || categories.length === 0) return
     const container = scrollRef.current
     if (!container) return
 
@@ -229,7 +231,7 @@ function MenuPageInner() {
 
     container.addEventListener('scroll', spy, { passive: true })
     return () => container.removeEventListener('scroll', spy)
-  }, [categories])
+  }, [loading, categories])
 
   // 활성 탭 자동 수평 스크롤 — 탭이 탭바 밖으로 나가면 따라옴
   useEffect(() => {
