@@ -65,6 +65,7 @@ export default function MenuPage() {
   const tabsRef = useRef<HTMLDivElement>(null)
   const isScrollingToRef = useRef(false)
   const scrollRef = useRef<HTMLDivElement>(null)  // 내부 스크롤 컨테이너
+  const intersectingCats = useRef(new Set<string>())  // IntersectionObserver 추적용
 
   // hydration 완료 여부 추적
   const [hydrated, setHydrated] = useState(() => useSessionStore.persist.hasHydrated())
@@ -173,29 +174,52 @@ export default function MenuPage() {
     return () => el.removeEventListener('scroll', onScroll)
   }, [])
 
-  // 스크롤 스파이 — 뷰포트 기준으로 현재 보이는 섹션의 카테고리 탭 자동 활성화
+  // 스크롤 스파이 — IntersectionObserver 기반으로 현재 보이는 섹션의 카테고리 탭 자동 활성화
   useEffect(() => {
+    if (categories.length === 0) return
     const container = scrollRef.current
-    if (!container || categories.length === 0) return
+    if (!container) return
 
-    const TABS_OFFSET = 64  // sticky 탭바 높이 + 여유
+    intersectingCats.current.clear()
+    const TABS_H = 52  // sticky 탭바 높이
 
-    function spy() {
-      if (isScrollingToRef.current) return
-      const baseTop = container!.getBoundingClientRect().top + TABS_OFFSET
-      let current = categories[0].id
-      for (const cat of categories) {
-        const el = sectionRefs.current[cat.id]
-        if (!el) continue
-        if (el.getBoundingClientRect().top <= baseTop) {
-          current = cat.id
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (isScrollingToRef.current) return
+
+        entries.forEach(entry => {
+          const catId = (entry.target as HTMLElement).dataset.cat
+          if (!catId) return
+          if (entry.isIntersecting) {
+            intersectingCats.current.add(catId)
+          } else {
+            intersectingCats.current.delete(catId)
+          }
+        })
+
+        if (intersectingCats.current.size === 0) return
+
+        // 현재 보이는 섹션 중 categories 순서상 가장 앞인 것을 활성 탭으로
+        for (const cat of categories) {
+          if (intersectingCats.current.has(cat.id)) {
+            setActiveCategory(cat.id)
+            break
+          }
         }
+      },
+      {
+        root: container,
+        rootMargin: `-${TABS_H}px 0px 0px 0px`,  // 탭바 영역 제외, 그 아래부터 감지
+        threshold: 0,
       }
-      setActiveCategory(current)
+    )
+
+    for (const cat of categories) {
+      const el = sectionRefs.current[cat.id]
+      if (el) observer.observe(el)
     }
 
-    container.addEventListener('scroll', spy, { passive: true })
-    return () => container.removeEventListener('scroll', spy)
+    return () => observer.disconnect()
   }, [categories])
 
   // 활성 탭 자동 수평 스크롤 — 탭이 탭바 밖으로 나가면 따라옴

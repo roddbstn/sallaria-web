@@ -164,12 +164,7 @@ function SuccessPageInner() {
         channelRef.current = channel
       } catch (err) {
         console.error('[success] Realtime 연결 오류:', err)
-        setTimeout(() => {
-          const now = Date.now()
-          setStatus('accepted')
-          setAcceptedAt(now)
-          sessionStorage.setItem('last_order_accepted_at', String(now))
-        }, 10_000)
+        // 자동 전환 없음 — POS 접수 버튼 클릭 시에만 전환됨
       }
     }
 

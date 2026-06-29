@@ -55,37 +55,56 @@ function HomePageInner() {
   const [storeNotFound, setStoreNotFound] = useState(false)
   const [qrAccountCode, setQrAccountCode] = useState<string | null>(null)
 
-  // URL에서 매장 구분자 추출 (?store={storeId})
-  const storeId = searchParams.get('store') ?? undefined
+  // URL에서 매장 구분자 추출 (?store={storeId}) + 거래처 QR 파라미터
+  const storeId     = searchParams.get('store')   ?? undefined
+  const accountCode = searchParams.get('account') ?? undefined
 
   // 내 주문 모달
   const [showHistory,    setShowHistory]    = useState(false)
   const [historyLoading, setHistoryLoading] = useState(false)
   const [historyList,    setHistoryList]    = useState<OrderHistoryWithStatus[]>([])
 
-  // 스토어명 로딩 — storeId 필수. 없으면 에러 상태
+  // 스토어명 로딩 — ?store= 우선, 없으면 ?account= 통해 store_id 조회
   useEffect(() => {
     async function loadStoreName() {
-      if (!storeId) {
-        setStoreNotFound(true)
+      const supabase = getSupabaseClient()
+
+      if (storeId) {
+        const { data } = await supabase.from('stores').select('name').eq('id', storeId).maybeSingle()
+        if (data?.name) {
+          setStoreName(data.name)
+          document.title = `${data.name} · 선결제 주문`
+        } else {
+          setStoreNotFound(true)
+        }
         return
       }
-      const supabase = getSupabaseClient()
-      const { data } = await supabase.from('stores').select('name').eq('id', storeId).maybeSingle()
-      if (data?.name) {
-        setStoreName(data.name)
-        document.title = `${data.name} · 선결제 주문`
-      } else {
-        setStoreNotFound(true)
+
+      if (accountCode) {
+        // 거래처 QR만 있을 때: 해당 거래처의 store_id로 매장명 조회
+        const { data } = await supabase
+          .from('accounts')
+          .select('store_id, stores(name)')
+          .eq('account_code', accountCode)
+          .maybeSingle()
+        const name = (data as any)?.stores?.name as string | undefined
+        if (name) {
+          setStoreName(name)
+          document.title = `${name} · 선결제 주문`
+        } else {
+          setStoreNotFound(true)
+        }
+        return
       }
+
+      // 둘 다 없으면 QR 안내 화면
+      setStoreNotFound(true)
     }
     loadStoreName()
-  }, [storeId])
+  }, [storeId, accountCode])
 
   // 세션 초기화 + 거래처 고유 QR 처리 (?account=코드)
   useEffect(() => {
-    const accountCode = searchParams.get('account')
-
     // QR 파라미터 없을 때만 세션 초기화 (메뉴→루트 리디렉트 시 세션 유지)
     if (!accountCode) {
       resetSession()

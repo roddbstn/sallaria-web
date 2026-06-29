@@ -51,7 +51,9 @@ export default function MenuDetailClient({ code }: { code: string }) {
   const editCartId = searchParams.get('edit')   // 장바구니 수정 모드
 
   const account    = useSessionStore(s => s.account)
-  const { addItem, updateItem, items } = useCartStore(s => ({ addItem: s.addItem, updateItem: s.updateItem, items: s.items }))
+  const addItem    = useCartStore(s => s.addItem)
+  const updateItem = useCartStore(s => s.updateItem)
+  const items      = useCartStore(s => s.items)
 
   const [menu, setMenu] = useState<Menu | null>(null)
   const [loading, setLoading] = useState(true)
@@ -111,7 +113,8 @@ export default function MenuDetailClient({ code }: { code: string }) {
       setLoading(false)
     }
     fetchMenu()
-  }, [code, router])
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [code])
 
   const handleToggle = useCallback((groupIndex: number, itemId: string) => {
     if (!menu) return
