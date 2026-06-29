@@ -72,12 +72,10 @@ function MenuPageInner() {
   const [showDropdown, setShowDropdown] = useState(false)
   const [showScrollTop, setShowScrollTop] = useState(false)
   const sectionRefs = useRef<Record<string, HTMLDivElement | null>>({})
-  const sentinelRefs = useRef<Record<string, HTMLDivElement | null>>({})  // 1px 스크롤 스파이용
   const tabButtonRefs = useRef<Record<string, HTMLButtonElement | null>>({})
   const tabsRef = useRef<HTMLDivElement>(null)
   const isScrollingToRef = useRef(false)
   const scrollRef = useRef<HTMLDivElement>(null)  // 내부 스크롤 컨테이너
-  const intersectingCats = useRef(new Set<string>())  // IntersectionObserver 추적용
 
   // hydration 완료 여부 추적
   const [hydrated, setHydrated] = useState(() => useSessionStore.persist.hasHydrated())
@@ -186,52 +184,31 @@ function MenuPageInner() {
     return () => el.removeEventListener('scroll', onScroll)
   }, [])
 
-  // 스크롤 스파이 — IntersectionObserver 기반으로 현재 보이는 섹션의 카테고리 탭 자동 활성화
+  // 스크롤 스파이 — scroll event + getBoundingClientRect 로 현재 보이는 카테고리 탭 활성화
   useEffect(() => {
     if (categories.length === 0) return
     const container = scrollRef.current
     if (!container) return
 
-    intersectingCats.current.clear()
-    const TABS_H = 52  // sticky 탭바 높이
+    // 탭바 실제 높이(~60px) 기준: 섹션 top이 이 값 이하로 오면 해당 카테고리 활성화
+    const TABS_H = 60
 
-    const observer = new IntersectionObserver(
-      (entries) => {
-        if (isScrollingToRef.current) return
-
-        entries.forEach(entry => {
-          const catId = (entry.target as HTMLElement).dataset.cat
-          if (!catId) return
-          if (entry.isIntersecting) {
-            intersectingCats.current.add(catId)
-          } else {
-            intersectingCats.current.delete(catId)
-          }
-        })
-
-        if (intersectingCats.current.size === 0) return
-
-        // 현재 보이는 섹션 중 categories 순서상 가장 앞인 것을 활성 탭으로
-        for (const cat of categories) {
-          if (intersectingCats.current.has(cat.id)) {
-            setActiveCategory(cat.id)
-            break
-          }
+    function spy() {
+      if (isScrollingToRef.current) return
+      const containerTop = container!.getBoundingClientRect().top
+      let active = categories[0].id
+      for (const cat of categories) {
+        const el = sectionRefs.current[cat.id]
+        if (!el) continue
+        if (el.getBoundingClientRect().top - containerTop <= TABS_H) {
+          active = cat.id
         }
-      },
-      {
-        root: container,
-        rootMargin: `-${TABS_H}px 0px 0px 0px`,  // 탭바 영역 제외, 그 아래부터 감지
-        threshold: 0,
       }
-    )
-
-    for (const cat of categories) {
-      const el = sentinelRefs.current[cat.id]
-      if (el) observer.observe(el)
+      setActiveCategory(active)
     }
 
-    return () => observer.disconnect()
+    container.addEventListener('scroll', spy, { passive: true })
+    return () => container.removeEventListener('scroll', spy)
   }, [categories])
 
   // 활성 탭 자동 수평 스크롤 — 탭이 탭바 밖으로 나가면 따라옴
@@ -376,12 +353,6 @@ function MenuPageInner() {
                 key={cat.id}
                 ref={el => { sectionRefs.current[cat.id] = el }}
               >
-                {/* 1px 센티넬 — IntersectionObserver가 이 점만 감시해 정확한 카테고리 감지 */}
-                <div
-                  ref={el => { sentinelRefs.current[cat.id] = el }}
-                  data-cat={cat.id}
-                  style={{ height: 1, marginBottom: -1 }}
-                />
                 <div className="h-2 bg-[#F5F5F5] mt-2" />
                 <div className="px-5 pt-5 pb-1">
                   <h2 className="text-[15px] font-bold text-[#1E1E1E]">{cat.name}</h2>
