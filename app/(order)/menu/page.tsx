@@ -354,7 +354,7 @@ function MenuPageInner() {
               >
                 <div className="h-2 bg-[#F5F5F5] mt-2" />
                 <div className="px-5 pt-5 pb-1">
-                  <h2 className="text-[15px] font-bold text-[#1E1E1E]">{cat.name}</h2>
+                  <h2 className="text-[19px] font-bold text-[#1E1E1E]">{cat.name}</h2>
                 </div>
 
                 <div className="px-5">
