@@ -53,6 +53,7 @@ function HomePageInner() {
   const [verifying, setVerifying] = useState(false)
   const [storeName,     setStoreName]     = useState('')
   const [storeNotFound, setStoreNotFound] = useState(false)
+  const [storeClosed,   setStoreClosed]   = useState(false)
   const [qrAccountCode, setQrAccountCode] = useState<string | null>(null)
 
   // URL에서 매장 구분자 추출 (?store={storeId}) + 거래처 QR 파라미터
@@ -70,10 +71,11 @@ function HomePageInner() {
       const supabase = getSupabaseClient()
 
       if (storeId) {
-        const { data } = await supabase.from('stores').select('name').eq('id', storeId).maybeSingle()
+        const { data } = await supabase.from('stores').select('name, is_open').eq('id', storeId).maybeSingle()
         if (data?.name) {
           setStoreName(data.name)
           document.title = `${data.name} · 선결제 주문`
+          if (data.is_open === false) setStoreClosed(true)
         } else {
           setStoreNotFound(true)
         }
@@ -84,13 +86,14 @@ function HomePageInner() {
         // 거래처 QR만 있을 때: 해당 거래처의 store_id로 매장명 조회
         const { data } = await supabase
           .from('accounts')
-          .select('store_id, stores(name)')
+          .select('store_id, stores(name, is_open)')
           .eq('account_code', accountCode)
           .maybeSingle()
-        const name = (data as any)?.stores?.name as string | undefined
-        if (name) {
-          setStoreName(name)
-          document.title = `${name} · 선결제 주문`
+        const store = (data as any)?.stores as { name: string; is_open: boolean } | undefined
+        if (store?.name) {
+          setStoreName(store.name)
+          document.title = `${store.name} · 선결제 주문`
+          if (store.is_open === false) setStoreClosed(true)
         } else {
           setStoreNotFound(true)
         }
@@ -239,6 +242,20 @@ function HomePageInner() {
   }, [pin, isLocked, verifying, verifyPin])
 
   // ── QR 코드 없이 직접 접속 ──
+  if (storeClosed) {
+    return (
+      <div className="flex flex-col items-center justify-center min-h-screen px-8 text-center bg-white">
+        <div className="text-[64px] mb-6">🌙</div>
+        <h2 className="text-[20px] font-bold text-[#1E1E1E] mb-3">현재 가게 운영시간이 아니에요</h2>
+        <p className="text-[14px] text-[#727272] leading-relaxed">
+          {storeName && <><span className="font-semibold text-[#1E1E1E]">{storeName}</span>가<br /></>}
+          운영을 잠시 쉬고 있어요.<br />
+          운영시간에 다시 방문해 주세요 😊
+        </p>
+      </div>
+    )
+  }
+
   if (storeNotFound) {
     return (
       <div className="flex flex-col items-center justify-center min-h-screen px-8 text-center bg-white">
