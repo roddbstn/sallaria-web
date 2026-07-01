@@ -6,6 +6,7 @@ import { useSessionStore } from '@/lib/store/session'
 import { useCartStore } from '@/lib/store/cart'
 import { getSupabaseClient } from '@/lib/supabase/client'
 import { formatWon } from '@/lib/utils'
+import { track } from '@/lib/firebase'
 import type { Account } from '@/lib/types'
 
 // ── 내 주문 이력 타입 ──────────────────────────────────────────────────────────
@@ -217,6 +218,7 @@ function HomePageInner() {
       setAccount(account)
       setLoginAt(Date.now())
       setPinError('')
+      track('login', { account_type: data.account_type, store_id: data.store_id ?? '' })
       setTimeout(() => router.push('/menu'), 120)
     } finally {
       setVerifying(false)

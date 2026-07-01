@@ -7,6 +7,7 @@ import { useSessionStore } from '@/lib/store/session'
 import { formatWon, formatOptionsLabel, DELIVERY_FEE } from '@/lib/utils'
 import type { OrderMethod, OrderItemPayload } from '@/lib/types'
 import { getSupabaseClient } from '@/lib/supabase/client'
+import { track } from '@/lib/firebase'
 
 const METHOD_OPTIONS: { value: OrderMethod; label: string; emoji: string; extra?: string }[] = [
   { value: '포장', label: '포장', emoji: '🛍️' },
@@ -162,6 +163,13 @@ export default function CheckoutPage() {
 
       // RPC는 { order_code, order_number } jsonb를 반환
       const result = data as { order_code: string; order_number: string }
+      track('purchase', {
+        transaction_id: result.order_code,
+        value:          total,
+        currency:       'KRW',
+        items:          items.map(i => ({ item_name: i.menuName, quantity: i.qty, price: i.basePrice })),
+        method,
+      })
       saveAndRedirect(result.order_code, result.order_number)
     } catch (err) {
       console.error('[checkout] unexpected error:', err)

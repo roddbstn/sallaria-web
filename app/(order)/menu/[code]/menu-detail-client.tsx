@@ -6,6 +6,7 @@ import { useSessionStore } from '@/lib/store/session'
 import { useCartStore } from '@/lib/store/cart'
 import { getSupabaseClient } from '@/lib/supabase/client'
 import { formatWon, calcSubtotal } from '@/lib/utils'
+import { track } from '@/lib/firebase'
 import type { Menu, MenuOptionGroup, SelectedOption } from '@/lib/types'
 import OptionGroup from '@/components/menu/option-group'
 
@@ -181,6 +182,7 @@ export default function MenuDetailClient({ code }: { code: string }) {
       router.push('/cart')
     } else {
       addItem(menu.code, menu.name, menu.price, qty, selectedOptions, menu.imageUrl)
+      track('add_to_cart', { item_name: menu.name, price: menu.price, quantity: qty, value: subtotal, currency: 'KRW' })
       router.back()
     }
   }
