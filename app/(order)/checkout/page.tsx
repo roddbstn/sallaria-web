@@ -1,13 +1,21 @@
 'use client'
 
 import { useRouter } from 'next/navigation'
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useCartStore } from '@/lib/store/cart'
 import { useSessionStore } from '@/lib/store/session'
 import { formatWon, formatOptionsLabel, DELIVERY_FEE } from '@/lib/utils'
 import type { OrderMethod, OrderItemPayload } from '@/lib/types'
 import { getSupabaseClient } from '@/lib/supabase/client'
 import { track } from '@/lib/firebase'
+
+declare global {
+  interface Window {
+    daum: {
+      Postcode: new (opts: { oncomplete: (d: any) => void }) => { open: () => void }
+    }
+  }
+}
 
 const METHOD_OPTIONS: { value: OrderMethod; label: string; emoji: string; extra?: string }[] = [
   { value: '포장', label: '포장', emoji: '🛍️' },
@@ -32,10 +40,32 @@ export default function CheckoutPage() {
 
   const [ordererName, setOrdererName] = useState('')
   const [phoneNumber, setPhoneNumber] = useState('')
-  const [deliveryAddress, setDeliveryAddress] = useState('')
+  const [baseAddress, setBaseAddress] = useState('')
+  const [detailAddress, setDetailAddress] = useState('')
   const [deliveryRemarks, setDeliveryRemarks] = useState('')
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
+
+  // Kakao 우편번호 스크립트 동적 로드
+  useEffect(() => {
+    const scriptId = 'kakao-postcode'
+    if (document.getElementById(scriptId)) return
+    const script = document.createElement('script')
+    script.id = scriptId
+    script.src = 'https://t1.daumcdn.net/mapjsapi/bundle/postcode/prod/postcode.v2.js'
+    script.async = true
+    document.body.appendChild(script)
+  }, [])
+
+  function openAddressSearch() {
+    new window.daum.Postcode({
+      oncomplete: (data: any) => {
+        const road = data.roadAddress || data.autoRoadAddress || data.jibunAddress || ''
+        setBaseAddress(road)
+        track('delivery_address_search', { filled: road.length > 0 })
+      },
+    }).open()
+  }
 
   function formatPhone(raw: string): string {
     const digits = raw.replace(/\D/g, '').slice(0, 11)
@@ -76,12 +106,12 @@ export default function CheckoutPage() {
   async function handleOrder() {
     if (!account || !method || items.length === 0) return
     if (!isPersonal && (!ordererName.trim() || !isPhoneValid)) return
-    if (method === '배달' && !deliveryAddress.trim()) return
+    if (method === '배달' && !baseAddress.trim()) return
     setIsSubmitting(true)
     setError(null)
 
     const finalOrderer = isPersonal ? account.name : ordererName.trim()
-    const finalPhone   = isPersonal ? '' : phoneNumber
+    const finalPhone   = isPersonal ? (account.contactPhone ?? '') : phoneNumber
     setOrderer(finalOrderer)
     setPhone(finalPhone)
 
@@ -148,7 +178,8 @@ export default function CheckoutPage() {
         p_delivery_fee:  method === '배달' ? DELIVERY_FEE : 0,
         p_note: (() => {
           const parts: string[] = []
-          if (method === '배달' && deliveryAddress.trim()) parts.push(`[배달주소] ${deliveryAddress.trim()}`)
+          if (method === '배달' && baseAddress.trim()) parts.push(`[배달주소] ${baseAddress.trim()}`)
+          if (method === '배달' && detailAddress.trim()) parts.push(`[배달상세] ${detailAddress.trim()}`)
           if (method === '배달' && deliveryRemarks.trim()) parts.push(`[배달요청] ${deliveryRemarks.trim()}`)
           if (remarks.trim()) parts.push(remarks.trim())
           return parts.length > 0 ? parts.join(' / ') : null
@@ -276,13 +307,30 @@ export default function CheckoutPage() {
               <label className="text-sm font-bold text-[#1E1E1E] mb-2 block">
                 배달 주소 <span className="text-[#C92A2A]">*</span>
               </label>
+              {/* 도로명 주소 검색 */}
+              <div className="flex gap-2 mb-2">
+                <div className="flex-1 border border-[#D7D7D7] rounded-xl px-4 py-3 text-sm bg-[#FAFAFA] text-[#1E1E1E] min-h-[48px] flex items-center">
+                  {baseAddress ? (
+                    <span>{baseAddress}</span>
+                  ) : (
+                    <span className="text-[#D7D7D7]">도로명 주소</span>
+                  )}
+                </div>
+                <button
+                  type="button"
+                  onClick={openAddressSearch}
+                  className="flex-shrink-0 px-4 py-3 bg-[#1E1E1E] text-white text-sm font-semibold rounded-xl active:scale-95 transition-transform"
+                >
+                  주소 검색
+                </button>
+              </div>
+              {/* 상세주소 입력 */}
               <input
                 type="text"
-                value={deliveryAddress}
-                onChange={e => setDeliveryAddress(e.target.value)}
-                onBlur={e => track('delivery_address_input', { filled: e.target.value.trim().length > 0 })}
-                placeholder="예: 대구 북구 침산동 123-45, 2층"
-                maxLength={100}
+                value={detailAddress}
+                onChange={e => setDetailAddress(e.target.value)}
+                placeholder="예: 2층, 101호"
+                maxLength={60}
                 className="w-full border border-[#D7D7D7] rounded-xl px-4 py-3 text-sm text-[#1E1E1E] placeholder:text-[#D7D7D7] outline-none focus:border-[#1E1E1E] transition-colors"
               />
             </div>
@@ -413,9 +461,9 @@ export default function CheckoutPage() {
       <footer className="flex-shrink-0 px-4 py-4 border-t border-[#D7D7D7] bg-white shadow-[0_-4px_20px_rgba(0,0,0,0.08)]">
         <button
           onClick={handleOrder}
-          disabled={isSubmitting || !method || (!isPersonal && (!ordererName.trim() || !isPhoneValid)) || (method === '배달' && !deliveryAddress.trim())}
+          disabled={isSubmitting || !method || (!isPersonal && (!ordererName.trim() || !isPhoneValid)) || (method === '배달' && !baseAddress.trim())}
           className={`w-full py-4 rounded-xl font-bold text-white text-base transition-colors ${
-            isSubmitting || !method || (!isPersonal && (!ordererName.trim() || !isPhoneValid)) || (method === '배달' && !deliveryAddress.trim()) ? 'bg-[#CCC] cursor-not-allowed' : 'bg-[#1E1E1E] active:scale-95'
+            isSubmitting || !method || (!isPersonal && (!ordererName.trim() || !isPhoneValid)) || (method === '배달' && !baseAddress.trim()) ? 'bg-[#CCC] cursor-not-allowed' : 'bg-[#1E1E1E] active:scale-95'
           }`}
         >
           {isSubmitting ? '주문 중...' : '주문하기'}

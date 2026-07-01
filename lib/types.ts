@@ -14,6 +14,7 @@ export interface Account {
   type: '구청 과' | '기업' | '개인' | '기타'
   org: string | null     // 기관명
   balance: number        // 현재잔액 (정수, 원)
+  contactPhone?: string | null  // 거래처 연락처 (개인 주문 시 영수증 전화번호로 사용)
   pin: string            // 4자리 PIN (mock only — real: server-side)
   storeId?: string       // 소속 스토어 ID
   storeName?: string     // 스토어명

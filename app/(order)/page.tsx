@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useCallback, useEffect, Suspense } from 'react'
+import { useState, useCallback, useEffect, useRef, Suspense } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { useSessionStore } from '@/lib/store/session'
 import { useCartStore } from '@/lib/store/cart'
@@ -55,6 +55,7 @@ function HomePageInner() {
   const [storeName,     setStoreName]     = useState('')
   const [storeNotFound, setStoreNotFound] = useState(false)
   const [storeClosed,   setStoreClosed]   = useState(false)
+  const storeClosedRef = useRef(false)   // verifyPin 스테일 클로저 방지용
   const [qrAccountCode, setQrAccountCode] = useState<string | null>(null)
 
   // URL에서 매장 구분자 추출 (?store={storeId}) + 거래처 QR 파라미터
@@ -76,7 +77,7 @@ function HomePageInner() {
         if (data?.name) {
           setStoreName(data.name)
           document.title = `${data.name} · 선결제 주문`
-          if (data.is_open === false) setStoreClosed(true)
+          if (data.is_open === false) { storeClosedRef.current = true; setStoreClosed(true) }
         } else {
           setStoreNotFound(true)
         }
@@ -94,7 +95,7 @@ function HomePageInner() {
         if (store?.name) {
           setStoreName(store.name)
           document.title = `${store.name} · 선결제 주문`
-          if (store.is_open === false) setStoreClosed(true)
+          if (store.is_open === false) { storeClosedRef.current = true; setStoreClosed(true) }
         } else {
           setStoreNotFound(true)
         }
@@ -120,7 +121,7 @@ function HomePageInner() {
       const supabase = getSupabaseClient()
       const { data, error } = await supabase
         .from('accounts')
-        .select('account_code, account_number, account_name, account_type, organization_name, current_balance, store_id')
+        .select('account_code, account_number, account_name, account_type, organization_name, contact_phone, current_balance, store_id')
         .eq('account_code', accountCode)
         .eq('is_active', true)
         .maybeSingle()
@@ -170,6 +171,8 @@ function HomePageInner() {
 
   const verifyPin = useCallback(async (inputPin: string) => {
     if (verifying) return
+    // 운영 종료 상태 재확인 (스테일 클로저 방지: ref로 최신값 읽음)
+    if (storeClosedRef.current) return
     setVerifying(true)
     try {
       const supabase = getSupabaseClient()
@@ -177,7 +180,7 @@ function HomePageInner() {
       // QR로 거래처가 특정됐으면 해당 거래처 PIN만 확인, 아니면 전체 검색
       let query = supabase
         .from('accounts')
-        .select('account_code, account_number, account_name, account_type, organization_name, current_balance, store_id')
+        .select('account_code, account_number, account_name, account_type, organization_name, contact_phone, current_balance, store_id')
         .eq('pin_code', inputPin)
         .eq('is_active', true)
 
@@ -214,6 +217,7 @@ function HomePageInner() {
         type:          TYPE_MAP[data.account_type] ?? '기타',
         org:           data.organization_name ?? null,
         balance:       data.current_balance,
+        contactPhone:  data.contact_phone ?? null,
         pin:           inputPin,
         storeId:       data.store_id ?? undefined,
         storeName,
