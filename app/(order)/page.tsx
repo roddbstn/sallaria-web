@@ -218,7 +218,7 @@ function HomePageInner() {
       setAccount(account)
       setLoginAt(Date.now())
       setPinError('')
-      track('login', { account_type: data.account_type, store_id: data.store_id ?? '' })
+      track('pin_login', { account_type: data.account_type, store_id: data.store_id ?? '' })
       setTimeout(() => router.push('/menu'), 120)
     } finally {
       setVerifying(false)
