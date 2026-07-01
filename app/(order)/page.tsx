@@ -138,6 +138,7 @@ function HomePageInner() {
   }, [])
 
   async function openHistory() {
+    track('order_history_open')
     setShowHistory(true)
     setHistoryLoading(true)
     try {
@@ -197,9 +198,11 @@ function HomePageInner() {
         if (newAttempts >= PIN_LOCK_LIMIT) {
           lockPin()
           setPinError('')
+          track('pin_locked', { store_id: storeId ?? '' })
         } else {
           const remaining = PIN_LOCK_LIMIT - newAttempts
           setPinError(`비밀번호가 틀렸습니다. (${newAttempts}회 오류, ${remaining}회 남음)`)
+          track('login_fail', { attempts: newAttempts, store_id: storeId ?? '' })
         }
         return
       }
@@ -455,7 +458,7 @@ function HomePageInner() {
                             <span className="text-[14px] font-bold text-[#1E1E1E]">{formatWon(order.total_amount)}</span>
                             {isActive && (
                               <button
-                                onClick={() => { setShowHistory(false); router.push(`/success?code=${order.order_code}`) }}
+                                onClick={() => { track('order_history_item_click', { status: order.status ?? '' }); setShowHistory(false); router.push(`/success?code=${order.order_code}`) }}
                                 className="text-[12px] font-bold text-white bg-[#017333] px-3 py-1.5 rounded-xl"
                               >
                                 진행 확인 →

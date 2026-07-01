@@ -158,6 +158,7 @@ export default function CheckoutPage() {
       if (rpcError || !data) {
         console.error('[checkout] RPC error:', rpcError)
         setError('주문 처리에 실패했습니다. 다시 시도해주세요.')
+        track('order_fail', { error: String(rpcError?.message ?? 'unknown') })
         return
       }
 
@@ -220,6 +221,7 @@ export default function CheckoutPage() {
                   type="text"
                   value={ordererName}
                   onChange={e => setOrdererName(e.target.value)}
+                  onBlur={e => track('name_input', { filled: e.target.value.trim().length > 0 })}
                   placeholder="예: 김지은"
                   maxLength={20}
                   className="w-full border border-[#D7D7D7] rounded-xl px-4 py-3 text-sm text-[#1E1E1E] placeholder:text-[#D7D7D7] outline-none focus:border-[#1E1E1E] transition-colors"
@@ -233,6 +235,7 @@ export default function CheckoutPage() {
                   type="tel"
                   value={phoneNumber}
                   onChange={e => setPhoneNumber(formatPhone(e.target.value))}
+                  onBlur={e => track('phone_input', { valid: e.target.value.replace(/\D/g, '').length === 11 })}
                   placeholder="010-0000-0000"
                   inputMode="numeric"
                   className="w-full border border-[#D7D7D7] rounded-xl px-4 py-3 text-sm text-[#1E1E1E] placeholder:text-[#D7D7D7] outline-none focus:border-[#1E1E1E] transition-colors"
@@ -249,7 +252,7 @@ export default function CheckoutPage() {
             {METHOD_OPTIONS.map((opt) => (
               <button
                 key={opt.value}
-                onClick={() => setMethod(opt.value)}
+                onClick={() => { track('method_select', { method: opt.value }); setMethod(opt.value) }}
                 className={`flex-1 py-3 rounded-xl text-sm font-medium transition-colors ${
                   method === opt.value
                     ? 'bg-[#E6F4EC] text-[#017333]'
@@ -277,6 +280,7 @@ export default function CheckoutPage() {
                 type="text"
                 value={deliveryAddress}
                 onChange={e => setDeliveryAddress(e.target.value)}
+                onBlur={e => track('delivery_address_input', { filled: e.target.value.trim().length > 0 })}
                 placeholder="예: 대구 북구 침산동 123-45, 2층"
                 maxLength={100}
                 className="w-full border border-[#D7D7D7] rounded-xl px-4 py-3 text-sm text-[#1E1E1E] placeholder:text-[#D7D7D7] outline-none focus:border-[#1E1E1E] transition-colors"
@@ -288,6 +292,7 @@ export default function CheckoutPage() {
                 type="text"
                 value={deliveryRemarks}
                 onChange={e => setDeliveryRemarks(e.target.value)}
+                onBlur={e => track('delivery_remarks_input', { filled: e.target.value.trim().length > 0 })}
                 placeholder="예: 문 앞에 놓아주세요"
                 maxLength={100}
                 className="w-full border border-[#D7D7D7] rounded-xl px-4 py-3 text-sm text-[#1E1E1E] placeholder:text-[#D7D7D7] outline-none focus:border-[#1E1E1E] transition-colors"
@@ -307,7 +312,7 @@ export default function CheckoutPage() {
                 <button
                   key={label}
                   type="button"
-                  onClick={() => handleTag(label)}
+                  onClick={() => { track('quick_tag_click', { tag: label, active: !remarks.includes(label) }); handleTag(label) }}
                   className={`px-3 py-1.5 rounded-full text-[13px] font-semibold transition-colors ${
                     active
                       ? 'bg-[#E6F4EC] text-[#017333]'
@@ -323,6 +328,7 @@ export default function CheckoutPage() {
             type="text"
             value={remarks}
             onChange={(e) => setRemarks(e.target.value)}
+            onBlur={e => { if (e.target.value.trim()) track('remarks_input', { filled: true }) }}
             placeholder="직접 입력 (예: 덜 맵게 해주세요)"
             className="w-full px-4 py-3 rounded-xl border border-[#D7D7D7] text-sm text-[#1E1E1E] placeholder:text-[#D7D7D7] focus:outline-none focus:border-[#1E1E1E] transition-colors"
           />

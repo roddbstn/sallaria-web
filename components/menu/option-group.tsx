@@ -18,8 +18,10 @@ export default function OptionGroup({
   isMissing = false,
   basePrice,
 }: OptionGroupProps) {
-  // 가격/사이즈 그룹: 최종가 표시 여부
-  const showFinalPrice = ['가격', '사이즈'].includes(group.group) && basePrice !== undefined
+  // 사이즈 그룹: 이름 + 우측 최종가 표시
+  const showFinalPrice = group.group === '사이즈' && basePrice !== undefined
+  // 가격 그룹: 이름 자체를 현재가(basePrice + extra)로 대체
+  const isGaGyeok = (group.group === '가격' || group.group === '가격(필수)') && basePrice !== undefined
 
   return (
     <div className={[
@@ -47,13 +49,22 @@ export default function OptionGroup({
           const isSoldOut = item.isSoldOut ?? false
 
           // 가격 표시 로직
+          // - 가격 그룹: 이름을 현재가로 대체, 우측 라벨 없음
+          // - 사이즈 그룹: 이름 유지, 우측에 최종가
+          // - 기타: +가격 또는 포함
+          const displayName = isGaGyeok
+            ? formatWon(basePrice! + item.plus)
+            : item.name
+
           let priceLabel = ''
-          if (showFinalPrice && basePrice !== undefined) {
-            priceLabel = formatWon(basePrice + item.plus)
-          } else if (item.plus > 0) {
-            priceLabel = `+${formatWon(item.plus)}`
-          } else if (item.plus === 0 && !showFinalPrice) {
-            priceLabel = '포함'
+          if (!isGaGyeok) {
+            if (showFinalPrice && basePrice !== undefined) {
+              priceLabel = formatWon(basePrice + item.plus)
+            } else if (item.plus > 0) {
+              priceLabel = `+${formatWon(item.plus)}`
+            } else if (item.plus === 0 && !showFinalPrice) {
+              priceLabel = '포함'
+            }
           }
 
           return (
@@ -100,7 +111,7 @@ export default function OptionGroup({
                   isSelected ? 'font-semibold text-[#1E1E1E]' : 'text-[#1E1E1E]',
                   isSoldOut ? 'line-through text-[#727272]' : '',
                 ].join(' ')}>
-                  {item.name}
+                  {displayName}
                   {isSoldOut && <span className="ml-2 text-[11px] text-[#727272]">품절</span>}
                 </span>
               </div>

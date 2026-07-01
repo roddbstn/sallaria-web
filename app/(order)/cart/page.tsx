@@ -1,11 +1,13 @@
 'use client'
 
 import { useRouter } from 'next/navigation'
+import { useEffect } from 'react'
 import { useCartStore } from '@/lib/store/cart'
 import { useSessionStore } from '@/lib/store/session'
 import CartItemComponent from '@/components/cart/CartItem'
 import CartSummary from '@/components/cart/CartSummary'
 import { formatWon } from '@/lib/utils'
+import { track } from '@/lib/firebase'
 
 export default function CartPage() {
   const router = useRouter()
@@ -22,24 +24,38 @@ export default function CartPage() {
   const isEmpty = items.length === 0
   const currentBalance = account?.balance ?? 0
 
-  // 확인 버튼 disabled 조건: 빈 장바구니
-  // 잔액 음수는 허용 (경고만)
+  // 장바구니 진입 트래킹
+  useEffect(() => {
+    track('cart_view', { item_count: items.length })
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
   const isDisabled = isEmpty
 
   function handleConfirm() {
     if (isDisabled) return
+    track('cart_to_checkout', { item_count: items.length, total: totalAmount() })
     router.push('/checkout')
   }
 
   function handleQtyChange(cartId: string, qty: number) {
     const item = items.find((i) => i.cartId === cartId)
     if (!item) return
+    const prev = item.qty
+    track('cart_item_qty_change', { menu_name: item.menuName, direction: qty > prev ? 'up' : 'down', new_qty: qty })
     updateItem(cartId, qty, item.selectedOptions)
+  }
+
+  function handleRemove(cartId: string) {
+    const item = items.find((i) => i.cartId === cartId)
+    if (item) track('cart_item_remove', { menu_name: item.menuName })
+    removeItem(cartId)
   }
 
   function handleEditOption(cartId: string) {
     const item = items.find((i) => i.cartId === cartId)
     if (!item) return
+    track('cart_edit_option', { menu_name: item.menuName })
     router.push(`/menu?item=${item.menuCode}&edit=${cartId}`)
   }
 
@@ -70,7 +86,7 @@ export default function CartPage() {
             <p className="text-4xl mb-3">🛒</p>
             <p className="text-sm">장바구니가 비어있어요.</p>
             <button
-              onClick={() => router.push('/menu')}
+              onClick={() => { track('cart_empty_go_menu'); router.push('/menu') }}
               className="mt-5 px-6 py-3 bg-[#017333] text-white text-sm font-bold rounded-xl active:opacity-80 transition-opacity"
             >
               메뉴 보러가기
@@ -86,7 +102,7 @@ export default function CartPage() {
                   item={item}
                   index={index}
                   onQtyChange={handleQtyChange}
-                  onRemove={removeItem}
+                  onRemove={handleRemove}
                   onEditOption={handleEditOption}
                 />
               ))}

@@ -1,12 +1,13 @@
 'use client'
 
-import { useState, useEffect, useRef, useCallback, Suspense } from 'react'
+import { useState, useEffect, useRef, useCallback, Suspense, useMemo } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { useSessionStore } from '@/lib/store/session'
 import { useCartStore } from '@/lib/store/cart'
 import { getSupabaseClient } from '@/lib/supabase/client'
 import { formatWon } from '@/lib/utils'
 import MenuCard from '@/components/menu/menu-card'
+import { track } from '@/lib/firebase'
 import MenuDetailClient from './[code]/menu-detail-client'
 import type { Category, Menu, MenuOptionGroup } from '@/lib/types'
 import type { RealtimeChannel } from '@supabase/supabase-js'
@@ -175,10 +176,21 @@ function MenuPageInner() {
   }, [account])
 
   // 스크롤 감지 — window 대신 내부 컨테이너 사용
+  const firedDepths = useRef(new Set<number>())
   useEffect(() => {
     const el = scrollRef.current
     if (!el) return
-    const onScroll = () => setShowScrollTop(el.scrollTop > 300)
+    const onScroll = () => {
+      setShowScrollTop(el.scrollTop > 300)
+      // 스크롤 깊이 트래킹 (25/50/75/90%)
+      const pct = Math.floor((el.scrollTop / (el.scrollHeight - el.clientHeight)) * 100)
+      for (const milestone of [25, 50, 75, 90]) {
+        if (pct >= milestone && !firedDepths.current.has(milestone)) {
+          firedDepths.current.add(milestone)
+          track('scroll_depth', { depth: milestone, page: 'menu' })
+        }
+      }
+    }
     el.addEventListener('scroll', onScroll, { passive: true })
     return () => el.removeEventListener('scroll', onScroll)
   }, [])
@@ -231,10 +243,12 @@ function MenuPageInner() {
     }
   }, [activeCategory])
 
-  const scrollToCategory = useCallback((catId: string) => {
+  const scrollToCategory = useCallback((catId: string, source: 'tab' | 'dropdown' = 'tab') => {
     const el = sectionRefs.current[catId]
     const container = scrollRef.current
     if (!el || !container) return
+    const catName = categoriesRef.current.find(c => c.id === catId)?.name ?? catId
+    track(source === 'dropdown' ? 'category_dropdown_select' : 'category_tab_click', { category_name: catName })
     isScrollingToRef.current = true
     setActiveCategory(catId)
     setShowDropdown(false)
@@ -331,7 +345,7 @@ function MenuPageInner() {
               ))}
             </div>
             <button
-              onClick={() => setShowDropdown(v => !v)}
+              onClick={() => { if (!showDropdown) track('category_dropdown_open'); setShowDropdown(v => !v) }}
               className="flex-shrink-0 w-10 h-10 mr-4 bg-[#FAFAFA] border border-[#D7D7D7] rounded-full flex items-center justify-center text-[#727272]"
               aria-label="전체 카테고리"
             >
@@ -369,7 +383,7 @@ function MenuPageInner() {
                     <MenuCard
                       key={menu.code}
                       menu={menu}
-                      onClick={() => router.push(`/menu?item=${menu.code}`)}
+                      onClick={() => { track('menu_card_click', { menu_name: menu.name, menu_code: menu.code }); router.push(`/menu?item=${menu.code}`) }}
                     />
                   ))}
                 </div>
@@ -406,7 +420,7 @@ function MenuPageInner() {
               {categories.map(cat => (
                 <button
                   key={cat.id}
-                  onClick={() => scrollToCategory(cat.id)}
+                  onClick={() => scrollToCategory(cat.id, 'dropdown')}
                   className={[
                     'whitespace-nowrap py-2 px-3 text-[12px] font-semibold rounded-xl transition-colors',
                     activeCategory === cat.id
@@ -429,7 +443,7 @@ function MenuPageInner() {
           style={{ boxShadow: '0 -4px 20px rgba(0,0,0,0.08)' }}
         >
           <button
-            onClick={() => router.push('/cart')}
+            onClick={() => { track('cart_bar_click', { item_count: qty }); router.push('/cart') }}
             className="w-full py-[16px] bg-[#1E1E1E] text-white rounded-xl font-bold text-[15px] flex items-center justify-between px-5"
           >
             <span className="bg-white/20 rounded-lg px-2 py-0.5 text-[13px]">{qty}개</span>

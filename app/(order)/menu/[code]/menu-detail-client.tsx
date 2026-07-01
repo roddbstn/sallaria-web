@@ -226,7 +226,7 @@ export default function MenuDetailClient({ code }: { code: string }) {
           <span className="text-[16px] font-semibold text-[#1E1E1E]">{formatWon(menu.price)}</span>
           <div className="flex items-center gap-4">
             <button
-              onClick={() => setQty(q => Math.max(1, q - 1))}
+              onClick={() => { const next = Math.max(1, qty - 1); if (next !== qty) track('quantity_change', { menu_name: menu.name, direction: 'down', new_qty: next }); setQty(q => Math.max(1, q - 1)) }}
               className="w-9 h-9 rounded-full border border-[#D7D7D7] flex items-center justify-center text-[18px] text-[#1E1E1E]"
               disabled={qty <= 1}
             >
@@ -234,7 +234,7 @@ export default function MenuDetailClient({ code }: { code: string }) {
             </button>
             <span className="text-[16px] font-bold w-6 text-center">{qty}</span>
             <button
-              onClick={() => setQty(q => q + 1)}
+              onClick={() => { track('quantity_change', { menu_name: menu.name, direction: 'up', new_qty: qty + 1 }); setQty(q => q + 1) }}
               className="w-9 h-9 rounded-full border border-[#D7D7D7] flex items-center justify-center text-[18px] text-[#1E1E1E]"
             >
               +

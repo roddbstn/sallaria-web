@@ -5,6 +5,7 @@ import { useRouter, useSearchParams } from 'next/navigation'
 import { useSessionStore } from '@/lib/store/session'
 import { getSupabaseClient } from '@/lib/supabase/client'
 import { formatWon } from '@/lib/utils'
+import { track } from '@/lib/firebase'
 import type { CartItem } from '@/lib/types'
 
 type OrderResultStatus = 'pending' | 'accepted' | 'rejected'
@@ -98,6 +99,7 @@ function SuccessPageInner() {
           if (!data) return
           if (data.status === '조리중' || data.status === '완료') {
             setStatus('accepted')
+            track('order_accepted', { order_code: orderCode })
             setAcceptedAt(prev => {
               if (prev) return prev
               const now = Date.now()
@@ -108,6 +110,7 @@ function SuccessPageInner() {
           } else if (data.status === '취소') {
             const reason = data.note ?? '점주가 주문을 거부했습니다.'
             setStatus('rejected')
+            track('order_rejected', { order_code: orderCode, reason })
             setRejectedReason(reason)
             sessionStorage.setItem('last_order_rejected', '1')
             sessionStorage.setItem('last_order_rej_reason', reason)
@@ -485,12 +488,13 @@ function SuccessPageInner() {
               href="https://naver.me/sallaria"
               target="_blank"
               rel="noopener noreferrer"
+              onClick={() => track('naver_review_click')}
               className="flex-1 py-3 rounded-xl bg-[#03C75A] text-white text-[13px] font-bold text-center"
             >
               네이버 리뷰 남기기
             </a>
             <button
-              onClick={() => setShowReview(false)}
+              onClick={() => { track('review_dismissed'); setShowReview(false) }}
               className="px-4 py-3 rounded-xl bg-[#F5F5F5] text-[#727272] text-[13px] font-semibold"
             >
               괜찮아요
