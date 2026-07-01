@@ -210,6 +210,9 @@ function HomePageInner() {
         return
       }
 
+      // DB 조회 완료 후 재확인 — 조회하는 동안 loadStoreName이 완료돼 닫혔을 수 있음
+      if (storeClosedRef.current) return
+
       const account: Account = {
         code:          data.account_code,
         accountNumber: data.account_number,
