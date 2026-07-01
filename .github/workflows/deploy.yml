@@ -24,6 +24,9 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: 빌드
+        env:
+          NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.NEXT_PUBLIC_SUPABASE_ANON_KEY }}
         run: pnpm build
 
       - name: Firebase 배포
