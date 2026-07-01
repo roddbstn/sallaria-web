@@ -76,8 +76,6 @@ function MenuPageInner() {
   const tabsRef = useRef<HTMLDivElement>(null)
   const isScrollingToRef = useRef(false)
   const scrollRef = useRef<HTMLDivElement>(null)  // 내부 스크롤 컨테이너
-  // 각 카테고리 섹션이 탭바 하단에 닿는 scrollTop 임계값 (로드 후 1회 계산)
-  const spyThresholds = useRef<{ id: string; threshold: number }[]>([])
 
   // hydration 완료 여부 추적
   const [hydrated, setHydrated] = useState(() => useSessionStore.persist.hasHydrated())
@@ -185,53 +183,37 @@ function MenuPageInner() {
     return () => el.removeEventListener('scroll', onScroll)
   }, [])
 
-  // 로드 완료 후 각 섹션의 절대 스크롤 임계값 계산 (1회)
-  // threshold = 해당 섹션 회색 구분선이 탭바 하단에 닿는 scrollTop 값
-  useEffect(() => {
-    if (loading || categories.length === 0) return
-    // DOM 렌더 완료 후 측정
-    requestAnimationFrame(() => {
-      const container = scrollRef.current
-      const tabsEl = tabsRef.current
-      if (!container || !tabsEl) return
-      const containerTop = container.getBoundingClientRect().top
-      const tabsH = tabsEl.offsetHeight
+  // categories를 ref로 유지 — spy 클로저에서 항상 최신 값을 읽기 위해
+  const categoriesRef = useRef<Category[]>([])
+  useEffect(() => { categoriesRef.current = categories }, [categories])
 
-      spyThresholds.current = categories
-        .map(cat => {
-          const el = sectionRefs.current[cat.id]
-          if (!el) return null
-          // 구분선의 절대 위치 = 현재 scrollTop + (뷰포트상 top - 컨테이너 top)
-          const absoluteTop = container.scrollTop + el.getBoundingClientRect().top - containerTop
-          // 이 값 이상으로 스크롤하면 구분선이 탭바 하단에 닿음
-          return { id: cat.id, threshold: absoluteTop - tabsH }
-        })
-        .filter((x): x is { id: string; threshold: number } => x !== null)
-    })
-  }, [loading, categories])
-
-  // 스크롤 스파이 — scrollTop과 사전계산된 임계값 비교 (간단하고 안정적)
-  // ※ loading도 deps에 포함: categories는 loading=true 시점에 세팅되므로
-  //   loading=false 후 scrollRef가 마운트된 뒤에 리스너가 달려야 함
+  // 스크롤 스파이 — loading이 끝나면 한 번만 리스너 부착
+  // loading=true 시 scrollRef div 자체가 없으므로 loading 의존으로 제어
   useEffect(() => {
-    if (loading || categories.length === 0) return
+    if (loading) return
     const container = scrollRef.current
     if (!container) return
+    const TABS_H = 56
 
     function spy() {
       if (isScrollingToRef.current) return
-      const scrollTop = container!.scrollTop
-      // 임계값을 넘은 카테고리 중 가장 마지막(=가장 아래) 것을 활성화
-      let active = categories[0].id
-      for (const { id, threshold } of spyThresholds.current) {
-        if (scrollTop >= threshold) active = id
+      const cats = categoriesRef.current
+      if (cats.length === 0) return
+      const baseTop = container!.getBoundingClientRect().top + TABS_H
+      let current = cats[0].id
+      for (const cat of cats) {
+        const el = sectionRefs.current[cat.id]
+        if (!el) continue
+        if (el.getBoundingClientRect().top <= baseTop) {
+          current = cat.id
+        }
       }
-      setActiveCategory(active)
+      setActiveCategory(current)
     }
 
     container.addEventListener('scroll', spy, { passive: true })
     return () => container.removeEventListener('scroll', spy)
-  }, [loading, categories])
+  }, [loading])
 
   // 활성 탭 자동 수평 스크롤 — 탭이 탭바 밖으로 나가면 따라옴
   useEffect(() => {
@@ -375,6 +357,7 @@ function MenuPageInner() {
               <div key={cat.id}>
                 <div
                   ref={el => { sectionRefs.current[cat.id] = el }}
+                  data-cat={cat.id}
                   className="h-2 bg-[#F5F5F5] mt-2"
                 />
                 <div className="px-5 pt-5 pb-1">
@@ -415,17 +398,17 @@ function MenuPageInner() {
           onClick={() => setShowDropdown(false)}
         >
           <div
-            className="bg-white rounded-2xl w-[300px] px-5 py-6 mx-4"
+            className="bg-white rounded-2xl w-[90vw] max-w-[380px] px-5 py-5 mx-4"
             onClick={e => e.stopPropagation()}
           >
-            <p className="text-[13px] font-bold text-[#1E1E1E] mb-4 text-center">카테고리</p>
-            <div className="grid grid-cols-3 gap-2">
+            <p className="text-[13px] font-bold text-[#1E1E1E] mb-3 text-center">카테고리</p>
+            <div className="flex flex-wrap gap-2">
               {categories.map(cat => (
                 <button
                   key={cat.id}
                   onClick={() => scrollToCategory(cat.id)}
                   className={[
-                    'py-2.5 px-1 text-[12px] font-semibold rounded-xl transition-colors',
+                    'whitespace-nowrap py-2 px-3 text-[12px] font-semibold rounded-xl transition-colors',
                     activeCategory === cat.id
                       ? 'bg-[#1E1E1E] text-white'
                       : 'bg-[#F5F5F5] text-[#727272]',
