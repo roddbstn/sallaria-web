@@ -424,6 +424,15 @@ function SuccessPageInner() {
           </div>
         )}
 
+        {/* 취소 불가 안내 */}
+        <div className="flex items-start gap-2 px-4 py-3 bg-[#FFF8F0] rounded-xl border border-[#FFE0B2]">
+          <span className="text-[#E65100] text-sm mt-0.5">ℹ️</span>
+          <p className="text-[13px] text-[#E65100] leading-relaxed">
+            주문이 접수된 이후에는 취소 및 환불이 어렵습니다.<br />
+            문의는 매장으로 직접 연락해 주세요.
+          </p>
+        </div>
+
         {/* 주문 메뉴 목록 */}
         {savedItems.length > 0 && (
           <div>
