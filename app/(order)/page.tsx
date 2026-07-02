@@ -260,10 +260,8 @@ function HomePageInner() {
         <div className="text-[64px] mb-6">🌙</div>
         <h2 className="text-[20px] font-bold text-[#1E1E1E] mb-3">현재 가게 운영시간이 아니에요</h2>
         <p className="text-[14px] text-[#727272] leading-relaxed">
-          {storeName
-            ? <><span className="font-semibold text-[#1E1E1E]">{storeName}</span>의 주문을 잠시 멈췄어요.<br /></>
-            : <>지금은 운영시간이 아니에요.<br /></>}
-          운영시간에 다시 방문해 주세요 😊
+          운영을 잠시 쉬고 있어요.<br />
+          가게 운영시간에 다시 방문해 주세요 😊
         </p>
       </div>
     )
