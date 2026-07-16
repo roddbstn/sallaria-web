@@ -58,7 +58,13 @@ function SuccessPageInner() {
   useEffect(() => {
     const raw = sessionStorage.getItem('last_order_items')
     if (!raw) return
-    const items: CartItem[] = JSON.parse(raw)
+    let items: CartItem[]
+    try {
+      items = JSON.parse(raw)
+    } catch {
+      // 파싱 실패 시 아이템 표시 생략 (주문 코드로 DB 조회는 계속 진행)
+      return
+    }
     setSavedItems(items)
 
     if (items.length === 0) return
@@ -367,7 +373,7 @@ function SuccessPageInner() {
           {(orderNumber ?? orderCode) && (
             <div className="flex justify-between items-center pb-2 border-b border-[#F0F0F0]">
               <span className="text-[#727272]">주문번호</span>
-              <span className="font-mono font-bold text-[#1E1E1E] text-base tracking-widest">
+              <span className="inline-block border border-[#b2dfc3] bg-[#E6F4EC] rounded-xl px-3 py-1 font-mono font-bold text-[#017333] text-[24px] tracking-widest leading-none">
                 #{orderNumber ?? orderCode}
               </span>
             </div>
@@ -490,7 +496,7 @@ function SuccessPageInner() {
           style={{ boxShadow: '0 -4px 20px rgba(0,0,0,0.08)' }}
         >
           <p className="text-[12px] text-[#727272] text-center mb-2">
-            맛있게 드셨나요? 리뷰 한 줄이 큰 힘이 됩니다 🙏
+            소중한 리뷰 작성이 큰 힘이 돼요! 🙏
           </p>
           <div className="flex gap-2">
             <a
