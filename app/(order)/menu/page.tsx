@@ -9,45 +9,9 @@ import { formatWon } from '@/lib/utils'
 import MenuCard from '@/components/menu/menu-card'
 import { track } from '@/lib/firebase'
 import MenuDetailClient from './[code]/menu-detail-client'
-import type { Category, Menu, MenuOptionGroup } from '@/lib/types'
+import type { Category, Menu } from '@/lib/types'
 import type { RealtimeChannel } from '@supabase/supabase-js'
-
-// DB row → Menu 타입 변환
-function mapDbMenu(row: any): Menu {
-  const options: MenuOptionGroup[] = (row.menu_option_groups ?? [])
-    .sort((a: any, b: any) => a.display_order - b.display_order)
-    .map((mog: any) => {
-      const og = mog.option_groups
-      return {
-        group: og.name,
-        required: og.is_required,
-        multi: og.is_multi,
-        items: (og.option_items ?? [])
-          .filter((it: any) => !it.is_hidden)
-          .sort((a: any, b: any) => a.display_order - b.display_order)
-          .map((it: any) => ({
-            id: it.id,
-            name: it.name,
-            plus: it.extra_price,
-            isSoldOut: it.is_sold_out,
-          })),
-      }
-    })
-
-  return {
-    code:      row.id,
-    cat:       row.category_id,
-    name:      row.name,
-    desc:      row.description ?? '',
-    price:     row.base_price,
-    emoji:     '🍽️',
-    imageUrl:  row.image_url ?? undefined,
-    popular:   row.is_popular,
-    isSoldOut: row.is_sold_out,
-    isHidden:  row.is_hidden,
-    options,
-  }
-}
+import { mapDbMenu } from '@/lib/mappers'
 
 export default function MenuPage() {
   return (
@@ -63,12 +27,13 @@ function MenuPageInner() {
   const selectedItemCode = searchParams.get('item')
   const account = useSessionStore(s => s.account)
   const orderer = useSessionStore(s => s.orderer)
-  const totalQty = useCartStore(s => s.totalQty)
-  const totalSubtotal = useCartStore(s => s.totalSubtotal)
+  const cartItems = useCartStore(s => s.items)
 
   const [categories, setCategories] = useState<Category[]>([])
   const [menus, setMenus] = useState<Menu[]>([])
   const [loading, setLoading] = useState(true)
+  const [fetchError, setFetchError] = useState(false)
+  const [retryCount, setRetryCount] = useState(0)
   const [activeCategory, setActiveCategory] = useState('')
   const [showDropdown, setShowDropdown] = useState(false)
   const [showScrollTop, setShowScrollTop] = useState(false)
@@ -132,48 +97,55 @@ function MenuPageInner() {
     if (!account) return
     async function load() {
       setLoading(true)
-      const supabase = getSupabaseClient()
+      setFetchError(false)
+      try {
+        const supabase = getSupabaseClient()
 
-      let catQuery = supabase
-        .from('categories')
-        .select('id, name, display_order')
-        .eq('is_active', true)
-        .order('display_order', { ascending: true })
-      if (account?.storeId) catQuery = catQuery.eq('store_id', account.storeId)
-      const { data: catData } = await catQuery
+        let catQuery = supabase
+          .from('categories')
+          .select('id, name, display_order')
+          .eq('is_active', true)
+          .order('display_order', { ascending: true })
+        if (account?.storeId) catQuery = catQuery.eq('store_id', account.storeId)
+        const { data: catData, error: catError } = await catQuery
+        if (catError) throw catError
 
-      if (!catData || catData.length === 0) {
-        setLoading(false)
-        return
-      }
+        if (!catData || catData.length === 0) {
+          return
+        }
 
-      const cats: Category[] = catData.map((c: { id: string; name: string }) => ({ id: c.id, name: c.name }))
-      setCategories(cats)
-      setActiveCategory(cats[0].id)
+        const cats: Category[] = catData.map((c: { id: string; name: string }) => ({ id: c.id, name: c.name }))
+        setCategories(cats)
+        setActiveCategory(cats[0].id)
 
-      const catIds = cats.map(c => c.id)
-      const { data: menuData } = await supabase
-        .from('menus')
-        .select(`
-          id, category_id, name, description, base_price, image_url,
-          is_popular, is_sold_out, is_hidden, display_order,
-          menu_option_groups (
-            display_order,
-            option_groups (
-              id, name, is_required, is_multi, max_select,
-              option_items ( id, name, extra_price, is_sold_out, is_hidden, display_order )
+        const catIds = cats.map(c => c.id)
+        const { data: menuData, error: menuError } = await supabase
+          .from('menus')
+          .select(`
+            id, category_id, name, description, base_price, image_url,
+            is_popular, is_sold_out, is_hidden, display_order,
+            menu_option_groups (
+              display_order,
+              option_groups (
+                id, name, is_required, is_multi, max_select,
+                option_items ( id, name, extra_price, is_sold_out, is_hidden, display_order )
+              )
             )
-          )
-        `)
-        .in('category_id', catIds)
-        .eq('is_hidden', false)
-        .order('display_order', { ascending: true })
+          `)
+          .in('category_id', catIds)
+          .eq('is_hidden', false)
+          .order('display_order', { ascending: true })
+        if (menuError) throw menuError
 
-      setMenus((menuData ?? []).map(mapDbMenu))
-      setLoading(false)
+        setMenus((menuData ?? []).map(mapDbMenu))
+      } catch {
+        setFetchError(true)
+      } finally {
+        setLoading(false)
+      }
     }
     load()
-  }, [account])
+  }, [account, retryCount])
 
   // 스크롤 감지 — window 대신 내부 컨테이너 사용
   const firedDepths = useRef(new Set<number>())
@@ -266,8 +238,8 @@ function MenuPageInner() {
     return menus.filter(m => m.cat === catId)
   }, [menus])
 
-  const qty = totalQty()
-  const subtotal = totalSubtotal()
+  const qty = cartItems.reduce((s, i) => s + i.qty, 0)
+  const subtotal = cartItems.reduce((s, i) => s + i.subtotal, 0)
 
   if (!hydrated) return null
   if (!account) {
@@ -289,6 +261,21 @@ function MenuPageInner() {
     )
   }
 
+  if (fetchError) {
+    return (
+      <div className="flex flex-col items-center justify-center min-h-screen px-8 text-center bg-white gap-3">
+        <p className="text-[16px] font-semibold text-[#1E1E1E]">메뉴를 불러오지 못했습니다</p>
+        <p className="text-[13px] text-[#727272]">네트워크 상태를 확인하고 다시 시도해주세요.</p>
+        <button
+          onClick={() => setRetryCount(c => c + 1)}
+          className="mt-2 px-6 py-2.5 rounded-full bg-[#017333] text-white text-[14px] font-semibold"
+        >
+          다시 시도
+        </button>
+      </div>
+    )
+  }
+
   return (
     // fixed inset-0: 뷰포트 전체를 점유 → 내부 overflow-y-auto 높이가 확정되어 sticky 동작
     <div
@@ -300,7 +287,7 @@ function MenuPageInner() {
 
         {/* 헤더 (스크롤 시 사라짐) */}
         <div className="bg-white pt-14 px-6 pb-0">
-          <h1 className="text-[26px] font-bold text-[#1E1E1E]">{account.storeName ?? '샐러리아'}</h1>
+          <h1 className="text-[26px] font-bold text-[#1E1E1E]">{account.storeName ?? ''}</h1>
 
           <div className="mt-3 mb-4 bg-[#F5F5F5] rounded-xl px-4 py-3 flex items-center justify-between">
             <span className="text-[13px] text-[#727272]">

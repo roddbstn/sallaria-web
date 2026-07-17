@@ -37,7 +37,8 @@ function SuccessPageInner() {
   const [orderOrderer,     setOrderOrderer]      = useState<string>('')
   const [orderPhone,       setOrderPhone]        = useState<string>('')
   const [orderAccount,     setOrderAccount]      = useState<string>('')
-  const [orderBalanceAfter, setOrderBalanceAfter] = useState<number | null>(null)
+  const [orderBalanceBefore, setOrderBalanceBefore] = useState<number | null>(null)
+  const [orderBalanceAfter, setOrderBalanceAfter]   = useState<number | null>(null)
   const [rejectedReason,   setRejectedReason]    = useState<string>('')
   const [showReview,       setShowReview]        = useState(false)
 
@@ -52,7 +53,8 @@ function SuccessPageInner() {
   const [menuImages,   setMenuImages]   = useState<Record<string, string>>({})
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const channelRef = useRef<any>(null)
+  const channelRef      = useRef<any>(null)
+  const setupRealtimeRef = useRef<((code: string) => void) | null>(null)
 
   // ── 주문 아이템 + 이미지 로드 ──────────────────────────────────────────
   useEffect(() => {
@@ -173,9 +175,11 @@ function SuccessPageInner() {
         channelRef.current = channel
       } catch (err) {
         console.error('[success] Realtime 연결 오류:', err)
-        // 자동 전환 없음 — POS 접수 버튼 클릭 시에만 전환됨
       }
     }
+
+    // 함수 정의 직후 ref 등록 — TEMP 코드일 때도 event listener에서 호출 가능하게
+    setupRealtimeRef.current = setupRealtimeAndStatus
 
     // ── URL param으로 접근 (QR 재스캔 후 '내 주문'에서 진입) ──
     if (!sessionCode && urlCode) {
@@ -183,7 +187,7 @@ function SuccessPageInner() {
       const supabase = getSupabaseClient()
       supabase
         .from('orders')
-        .select('order_number, orderer_name, orderer_phone, method, total_amount, balance_after, accounts ( account_name )')
+        .select('order_number, orderer_name, orderer_phone, method, total_amount, balance_before, balance_after, accounts ( account_name )')
         .eq('order_code', urlCode)
         .maybeSingle()
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -195,7 +199,8 @@ function SuccessPageInner() {
           setOrderOrderer(data.orderer_name ?? '')
           setOrderPhone(data.orderer_phone ?? '')
           setOrderAccount((data.accounts as any)?.account_name ?? '')
-          if (data.balance_after !== null) setOrderBalanceAfter(data.balance_after)
+          if (data.balance_before !== null) setOrderBalanceBefore(data.balance_before)
+          if (data.balance_after  !== null) setOrderBalanceAfter(data.balance_after)
         })
       setupRealtimeAndStatus(urlCode)
       return () => {
@@ -210,7 +215,8 @@ function SuccessPageInner() {
     const orderer        = sessionStorage.getItem('last_order_orderer') ?? ''
     const phone          = sessionStorage.getItem('last_order_phone') ?? ''
     const acct           = sessionStorage.getItem('last_order_account') ?? ''
-    const balanceAfterRaw = sessionStorage.getItem('last_order_balance_after')
+    const balanceBeforeRaw = sessionStorage.getItem('last_order_balance_before')
+    const balanceAfterRaw  = sessionStorage.getItem('last_order_balance_after')
 
     setOrderCode(code)
     setOrderNumber(num)
@@ -219,7 +225,8 @@ function SuccessPageInner() {
     setOrderOrderer(orderer)
     setOrderPhone(phone)
     setOrderAccount(acct)
-    if (balanceAfterRaw !== null) setOrderBalanceAfter(Number(balanceAfterRaw))
+    if (balanceBeforeRaw !== null) setOrderBalanceBefore(Number(balanceBeforeRaw))
+    if (balanceAfterRaw  !== null) setOrderBalanceAfter(Number(balanceAfterRaw))
 
     if (code.startsWith('MOCK-')) {
       setStatus('accepted')
@@ -227,6 +234,42 @@ function SuccessPageInner() {
       setTotalSeconds(10 * 60)
       setSecondsLeft(10 * 60)
       return
+    }
+
+    // TEMP 코드 = RPC 아직 진행 중 → Realtime 스킵, 이벤트 대기
+    if (code.startsWith('TEMP-')) {
+      // 혹시 이미 실패 결과가 기록돼 있으면 바로 표시
+      if (sessionStorage.getItem('last_order_failed') === '1') {
+        const failReason = sessionStorage.getItem('last_order_fail_reason')
+        setStatus('rejected')
+        setRejectedReason(failReason ?? '주문 처리에 실패했습니다.')
+        return
+      }
+
+      // order_rpc_done 이벤트가 마운트 전에 발행됐을 경우를 대비:
+      // sessionStorage가 실제 코드로 업데이트될 때까지 100ms마다 폴링
+      const ssInterval = setInterval(() => {
+        const failedFlag = sessionStorage.getItem('last_order_failed')
+        if (failedFlag === '1') {
+          clearInterval(ssInterval)
+          const reason = sessionStorage.getItem('last_order_fail_reason')
+          setStatus('rejected')
+          setRejectedReason(reason ?? '주문 처리에 실패했습니다.')
+          return
+        }
+        const realCode = sessionStorage.getItem('last_order_code')
+        if (!realCode || realCode.startsWith('TEMP-')) return
+        clearInterval(ssInterval)
+        const realNum = sessionStorage.getItem('last_order_number')
+        setOrderCode(realCode)
+        if (realNum) setOrderNumber(realNum)
+        // channelRef.current이 없을 때만 Realtime 설정 (중복 방지)
+        if (!channelRef.current) {
+          setupRealtimeRef.current?.(realCode)
+        }
+      }, 100)
+
+      return () => clearInterval(ssInterval)
     }
 
     // 새로고침 복원
@@ -261,6 +304,40 @@ function SuccessPageInner() {
     }
   }, [router, searchParams])
 
+  // ── pending 상태 폴링 폴백 (Realtime 미수신 대비, 3초마다) ────────────
+  useEffect(() => {
+    if (status !== 'pending' || !orderCode || orderCode.startsWith('TEMP-') || orderCode.startsWith('MOCK-')) return
+
+    async function poll() {
+      const supabase = getSupabaseClient()
+      const { data } = await supabase
+        .from('orders')
+        .select('status, note')
+        .eq('order_code', orderCode)
+        .maybeSingle()
+      if (!data) return
+      if (data.status === '조리중' || data.status === '완료') {
+        setStatus('accepted')
+        setAcceptedAt(prev => {
+          if (prev) return prev
+          const now = Date.now()
+          sessionStorage.setItem('last_order_accepted_at', String(now))
+          return now
+        })
+        if (data.status === '완료') setPosCompleted(true)
+      } else if (data.status === '취소') {
+        const reason = data.note ?? '점주가 주문을 거부했습니다.'
+        setStatus('rejected')
+        setRejectedReason(reason)
+        sessionStorage.setItem('last_order_rejected', '1')
+        sessionStorage.setItem('last_order_rej_reason', reason)
+      }
+    }
+
+    const id = setInterval(poll, 3000)
+    return () => clearInterval(id)
+  }, [status, orderCode])
+
   // ── 타이머 카운트다운 ──────────────────────────────────────────────────
   useEffect(() => {
     if (status !== 'accepted' || totalSeconds === null || acceptedAt === null) return
@@ -272,6 +349,30 @@ function SuccessPageInner() {
     const id = setInterval(tick, 1000)
     return () => clearInterval(id)
   }, [status, totalSeconds, acceptedAt])
+
+  // ── 백그라운드 RPC 결과 수신 ─────────────────────────────────────────
+  useEffect(() => {
+    const onDone = (e: Event) => {
+      const { order_code, order_number } = (e as CustomEvent).detail
+      setOrderCode(order_code)
+      setOrderNumber(order_number)
+      // channelRef.current이 없을 때만 Realtime 설정 (sessionStorage 폴링과 중복 방지)
+      if (!channelRef.current) {
+        setupRealtimeRef.current?.(order_code)
+      }
+    }
+    const onFailed = (e: Event) => {
+      const { reason } = (e as CustomEvent).detail
+      setStatus('rejected')
+      setRejectedReason(reason ?? '주문 처리에 실패했습니다.')
+    }
+    window.addEventListener('order_rpc_done',   onDone)
+    window.addEventListener('order_rpc_failed', onFailed)
+    return () => {
+      window.removeEventListener('order_rpc_done',   onDone)
+      window.removeEventListener('order_rpc_failed', onFailed)
+    }
+  }, [])
 
   // ── 5초 후 리뷰 바 표시 ───────────────────────────────────────────────
   useEffect(() => {
@@ -334,6 +435,11 @@ function SuccessPageInner() {
                 ? (isDelivery ? '배달기사가 곧 도착해요!' : '메뉴가 준비됐어요!')
                 : '주문이 접수됐어요!'}
             </p>
+            {(orderNumber ?? orderCode) && (
+              <span className="inline-block border border-[#b2dfc3] bg-[#E6F4EC] rounded-xl px-3 py-1 font-mono font-bold text-[#017333] text-[36px] tracking-widest leading-none mt-2">
+                #{orderNumber ?? orderCode}
+              </span>
+            )}
             {isReady && !isDelivery && (
               <p className="text-sm text-[#017333] font-semibold mt-0.5">매장에서 받아가세요</p>
             )}
@@ -353,7 +459,7 @@ function SuccessPageInner() {
         {hasTimer && !isReady && (
           <div className="bg-[#F5F5F5] rounded-2xl px-5 py-4">
             <p className="text-[11px] font-semibold text-[#727272] mb-1">예상 대기시간</p>
-            <p className="text-[36px] font-extrabold text-[#1E1E1E] leading-none mb-3 tabular-nums">
+            <p className="text-[24px] font-extrabold text-[#1E1E1E] leading-none mb-3 tabular-nums">
               {formatTime(secondsLeft!)}
             </p>
             <div className="h-2 bg-[#D7D7D7] rounded-full overflow-hidden">
@@ -370,14 +476,6 @@ function SuccessPageInner() {
 
         {/* 주문 정보 */}
         <div className="bg-[#FAFAFA] rounded-xl px-4 py-4 space-y-2 text-sm">
-          {(orderNumber ?? orderCode) && (
-            <div className="flex justify-between items-center pb-2 border-b border-[#F0F0F0]">
-              <span className="text-[#727272]">주문번호</span>
-              <span className="inline-block border border-[#b2dfc3] bg-[#E6F4EC] rounded-xl px-3 py-1 font-mono font-bold text-[#017333] text-[24px] tracking-widest leading-none">
-                #{orderNumber ?? orderCode}
-              </span>
-            </div>
-          )}
           {orderAccount && (
             <div className="flex justify-between">
               <span className="text-[#727272]">거래처</span>
@@ -404,16 +502,22 @@ function SuccessPageInner() {
               </span>
             </div>
           )}
-          {orderTotal > 0 && (
+          {orderBalanceBefore !== null && (
             <div className="flex justify-between pt-2 border-t border-[#F0F0F0]">
+              <span className="text-[#727272]">기존 선결제 잔액</span>
+              <span className="font-normal text-[#1E1E1E]">{formatWon(orderBalanceBefore)}</span>
+            </div>
+          )}
+          {orderTotal > 0 && (
+            <div className="flex justify-between">
               <span className="text-[#727272] font-semibold">결제 금액</span>
               <span className="font-bold text-[#1E1E1E]">{formatWon(orderTotal)}</span>
             </div>
           )}
           {orderBalanceAfter !== null && (
-            <div className="flex justify-between">
-              <span className="text-[#727272] font-semibold">주문 후 잔액</span>
-              <span className={`font-bold ${orderBalanceAfter < 0 ? 'text-[#C92A2A]' : 'text-[#017333]'}`}>
+            <div className="flex justify-between pt-3 mt-1 border-t border-[#E8E8E8]">
+              <span className="text-[#727272]">주문 후 잔액</span>
+              <span className={`font-normal ${orderBalanceAfter < 0 ? 'text-[#C92A2A]' : 'text-[#1E1E1E]'}`}>
                 {formatWon(orderBalanceAfter)}
               </span>
             </div>
@@ -425,7 +529,7 @@ function SuccessPageInner() {
           <div className="flex items-center justify-center gap-1.5 px-4 py-2.5 bg-[#E6F4EC] rounded-xl">
             <span className="text-[#017333] text-sm">✓</span>
             <p className="text-sm text-[#017333] font-semibold">
-              선결제 잔액에서 차감되었어요
+              선결제 잔액에서 {formatWon(orderTotal)}이 차감되었어요
             </p>
           </div>
         )}
@@ -434,7 +538,7 @@ function SuccessPageInner() {
         <div className="flex items-start gap-2 px-4 py-3 bg-[#FFF8F0] rounded-xl border border-[#FFE0B2]">
           <span className="text-[#E65100] text-sm mt-0.5">ℹ️</span>
           <p className="text-[13px] text-[#E65100] leading-relaxed">
-            주문이 접수된 이후에는 취소 및 환불이 어렵습니다.<br />
+            주문 접수 후에는 취소 및 환불이 어려워요.<br />
             문의는 매장으로 직접 연락해 주세요.
           </p>
         </div>
@@ -495,26 +599,18 @@ function SuccessPageInner() {
           className="fixed bottom-0 left-0 right-0 max-w-[430px] mx-auto px-4 py-3 bg-white border-t border-[#F0F0F0]"
           style={{ boxShadow: '0 -4px 20px rgba(0,0,0,0.08)' }}
         >
-          <p className="text-[12px] text-[#727272] text-center mb-2">
-            소중한 리뷰 작성이 큰 힘이 돼요! 🙏
+          <p className="text-[12px] text-[#B0B0B0] text-center mb-2">
+            소중한 리뷰 작성이 큰 힘이 돼요!
           </p>
-          <div className="flex gap-2">
-            <a
-              href="https://naver.me/sallaria"
-              target="_blank"
-              rel="noopener noreferrer"
-              onClick={() => track('naver_review_click')}
-              className="flex-1 py-3 rounded-xl bg-[#03C75A] text-white text-[13px] font-bold text-center"
-            >
-              네이버 리뷰 남기기
-            </a>
-            <button
-              onClick={() => { track('review_dismissed'); setShowReview(false) }}
-              className="px-4 py-3 rounded-xl bg-[#F5F5F5] text-[#727272] text-[13px] font-semibold"
-            >
-              괜찮아요
-            </button>
-          </div>
+          <a
+            href="https://naver.me/sallaria"
+            target="_blank"
+            rel="noopener noreferrer"
+            onClick={() => track('naver_review_click')}
+            className="block w-full py-4 rounded-xl bg-[#03C75A] text-white text-[16px] font-extrabold text-center transition-transform duration-100 active:scale-95 active:brightness-90"
+          >
+            네이버 리뷰 남기기
+          </a>
         </div>
       )}
     </div>
