@@ -188,7 +188,7 @@ export default function PosPage() {
 
       {/* 상단 상태 바 */}
       <header className="flex-shrink-0 bg-[#1E1E1E] text-white px-6 py-3 flex items-center justify-between">
-        <span className="text-[15px] font-bold tracking-tight">샐러리아 POS</span>
+        <span className="text-[15px] font-bold tracking-tight">프리POS</span>
         <div className="flex items-center gap-5 text-[13px]">
           <span className="flex items-center gap-1.5">
             <span className="w-2 h-2 rounded-full bg-[#4CAF50] inline-block" />

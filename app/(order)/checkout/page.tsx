@@ -17,6 +17,16 @@ declare global {
   }
 }
 
+const DEFAULT_DELIVERY_REMARK = '전화주시면 마중 나갈게요.'
+const DELIVERY_REMARK_OPTIONS = [
+  '문 앞에 두고 초인종 눌러주세요.',
+  '문 앞에 두고 노크해주세요.',
+  '초인종, 노크 없이 문 앞에만 놔주세요.',
+  '직접 받을게요.',
+  '전화주시면 마중 나갈게요.',
+  '직접 입력',
+]
+
 const METHOD_OPTIONS: { value: OrderMethod; label: string; emoji: string; extra?: string }[] = [
   { value: '포장', label: '포장', emoji: '🛍️' },
   { value: '내점', label: '매장 식사', emoji: '🍽️' },
@@ -42,7 +52,10 @@ export default function CheckoutPage() {
   const [phoneNumber, setPhoneNumber] = useState('')
   const [baseAddress, setBaseAddress] = useState('')
   const [detailAddress, setDetailAddress] = useState('')
-  const [deliveryRemarks, setDeliveryRemarks] = useState('')
+  const [deliveryRemarks, setDeliveryRemarks] = useState(DEFAULT_DELIVERY_REMARK)
+  const [showDeliveryModal, setShowDeliveryModal] = useState(false)
+  const [draftOption, setDraftOption] = useState(DEFAULT_DELIVERY_REMARK)
+  const [draftCustomText, setDraftCustomText] = useState('')
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -75,6 +88,31 @@ export default function CheckoutPage() {
   }
 
   const isPhoneValid = phoneNumber.replace(/\D/g, '').length === 11
+
+  function openDeliveryModal() {
+    const isPredefined = DELIVERY_REMARK_OPTIONS.slice(0, -1).includes(deliveryRemarks)
+    if (isPredefined) {
+      setDraftOption(deliveryRemarks)
+      setDraftCustomText('')
+    } else {
+      setDraftOption('직접 입력')
+      setDraftCustomText(deliveryRemarks)
+    }
+    setShowDeliveryModal(true)
+  }
+
+  function closeDeliveryModal() {
+    setShowDeliveryModal(false)
+  }
+
+  function confirmDeliveryOption() {
+    if (draftOption === '직접 입력') {
+      setDeliveryRemarks(draftCustomText.trim() || DEFAULT_DELIVERY_REMARK)
+    } else {
+      setDeliveryRemarks(draftOption)
+    }
+    setShowDeliveryModal(false)
+  }
 
   function handleTag(label: string) {
     const active = remarks.includes(label)
@@ -115,30 +153,102 @@ export default function CheckoutPage() {
     setOrderer(finalOrderer)
     setPhone(finalPhone)
 
-    // sessionStorage에 주문 정보 저장 후 성공 화면으로 이동하는 헬퍼
-    function saveAndRedirect(orderCode: string, orderNumber?: string) {
-      // 이전 주문의 POS 상태값 완전 초기화 — 남아있으면 새 주문 success 페이지가 오염됨
-      sessionStorage.removeItem('last_order_accepted_at')
-      sessionStorage.removeItem('last_order_total_seconds')
-      sessionStorage.removeItem('last_order_rejected')
-      sessionStorage.removeItem('last_order_rej_reason')
+    // ── 1. RPC 페이로드 미리 구성 ──
+    const payload: OrderItemPayload[] = items.map((item) => ({
+      menu_id:         item.menuCode,
+      menu_name:       item.menuName,
+      quantity:        item.qty,
+      unit_price:      item.basePrice + item.selectedOptions.reduce((s, o) => s + o.plus, 0),
+      option_item_ids: item.selectedOptions.map((o) => o.optionId),
+      option_names:    item.selectedOptions.map((o) => o.optionName),
+      option_prices:   item.selectedOptions.map((o) => o.plus),
+    }))
 
-      sessionStorage.setItem('last_order_code', orderCode)
-      sessionStorage.setItem('last_order_number', orderNumber ?? orderCode)
-      sessionStorage.setItem('last_order_method', method!)
-      sessionStorage.setItem('last_order_total', String(total))
-      sessionStorage.setItem('last_order_orderer', finalOrderer)
-      sessionStorage.setItem('last_order_phone', finalPhone)
-      sessionStorage.setItem('last_order_account', account!.name)
-      sessionStorage.setItem('last_order_items', JSON.stringify(items))
-      sessionStorage.setItem('last_order_balance_after', String(afterBalance))
+    const rpcNote = (() => {
+      const parts: string[] = []
+      if (method === '배달' && baseAddress.trim())    parts.push(`[배달주소] ${baseAddress.trim()}`)
+      if (method === '배달' && detailAddress.trim())  parts.push(`[배달상세] ${detailAddress.trim()}`)
+      if (method === '배달' && deliveryRemarks.trim()) parts.push(`[배달요청] ${deliveryRemarks.trim()}`)
+      if (remarks.trim()) parts.push(remarks.trim())
+      return parts.length > 0 ? parts.join(' / ') : null
+    })()
 
-      // localStorage에 주문 이력 저장 (내 주문 기능용 — QR 재스캔 후에도 조회 가능)
+    // ── 2. 즉시 /success 이동 (낙관적 네비게이션) ──
+    const tempCode = `TEMP-${Date.now()}`
+
+    sessionStorage.removeItem('last_order_accepted_at')
+    sessionStorage.removeItem('last_order_total_seconds')
+    sessionStorage.removeItem('last_order_rejected')
+    sessionStorage.removeItem('last_order_rej_reason')
+    sessionStorage.removeItem('last_order_failed')
+    sessionStorage.removeItem('last_order_fail_reason')
+
+    sessionStorage.setItem('last_order_code',           tempCode)
+    sessionStorage.setItem('last_order_number',         '')   // RPC 완료 후 업데이트
+    sessionStorage.setItem('last_order_method',         method!)
+    sessionStorage.setItem('last_order_total',          String(total))
+    sessionStorage.setItem('last_order_orderer',        finalOrderer)
+    sessionStorage.setItem('last_order_phone',          finalPhone)
+    sessionStorage.setItem('last_order_account',        account!.name)
+    sessionStorage.setItem('last_order_items',          JSON.stringify(items))
+    sessionStorage.setItem('last_order_balance_before', String(currentBalance))
+    sessionStorage.setItem('last_order_balance_after',  String(afterBalance))
+
+    setAccount({ ...account!, balance: afterBalance })
+    clearCart()
+    router.push('/success')  // 즉시 이동 — 아래 RPC는 백그라운드 실행
+
+    // ── 3. 백그라운드 RPC (keepalive fetch — navigation 후에도 요청 유지) ──
+    try {
+      const SUPABASE_URL      = process.env.NEXT_PUBLIC_SUPABASE_URL!
+      const SUPABASE_ANON_KEY = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+
+      const res = await fetch(`${SUPABASE_URL}/rest/v1/rpc/create_order`, {
+        method:    'POST',
+        keepalive: true,          // navigation 중에도 요청 살아있음
+        headers: {
+          'Content-Type':  'application/json',
+          'apikey':        SUPABASE_ANON_KEY,
+          'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+          'Prefer':        'return=representation',
+        },
+        body: JSON.stringify({
+          p_account_code:  account.code,
+          p_orderer_name:  finalOrderer,
+          p_orderer_phone: finalPhone,
+          p_method:        method,
+          p_items:         payload,
+          p_delivery_fee:  method === '배달' ? DELIVERY_FEE : 0,
+          p_note:          rpcNote,
+        }),
+      })
+
+      const data = await res.json().catch(() => null)
+      const rpcError = res.ok ? null : data
+
+      if (!res.ok || !data) {
+        console.error('[checkout] RPC error:', rpcError)
+        const reason = (typeof data?.message === 'string' ? data.message : null) ?? '주문 처리에 실패했습니다.'
+        sessionStorage.setItem('last_order_failed',      '1')
+        sessionStorage.setItem('last_order_fail_reason', reason)
+        window.dispatchEvent(new CustomEvent('order_rpc_failed', { detail: { reason } }))
+        track('order_fail', { error: reason })
+        return
+      }
+
+      // Supabase REST RPC는 배열 또는 단일 객체로 반환
+      const result = (Array.isArray(data) ? data[0] : data) as { order_code: string; order_number: string }
+
+      // sessionStorage 실제 코드로 업데이트
+      sessionStorage.setItem('last_order_code',   result.order_code)
+      sessionStorage.setItem('last_order_number', result.order_number)
+
+      // localStorage 주문 이력 저장
       try {
         const prev = JSON.parse(localStorage.getItem('sallaria_order_history') ?? '[]')
         const entry = {
-          order_code:   orderCode,
-          order_number: orderNumber ?? orderCode,
+          order_code:   result.order_code,
+          order_number: result.order_number,
           account_name: account!.name,
           orderer_name: finalOrderer,
           ordered_at:   new Date().toISOString(),
@@ -148,53 +258,11 @@ export default function CheckoutPage() {
         localStorage.setItem('sallaria_order_history', JSON.stringify([entry, ...prev].slice(0, 20)))
       } catch { /* ignore */ }
 
-      // 세션 잔액 갱신 (메뉴로 돌아와도 차감된 잔액 표시)
-      setAccount({ ...account!, balance: afterBalance })
-      clearCart()
-      router.push('/success')
-    }
-
-    try {
-      // RPC 페이로드 구성 (단가·메뉴명·옵션명 스냅샷)
-      const payload: OrderItemPayload[] = items.map((item) => ({
-        menu_id:         item.menuCode,
-        menu_name:       item.menuName,
-        quantity:        item.qty,
-        unit_price:      item.basePrice + item.selectedOptions.reduce((s, o) => s + o.plus, 0),
-        option_item_ids: item.selectedOptions.map((o) => o.optionId),
-        option_names:    item.selectedOptions.map((o) => o.optionName),
-        option_prices:   item.selectedOptions.map((o) => o.plus),
+      // success 페이지에 결과 전달
+      window.dispatchEvent(new CustomEvent('order_rpc_done', {
+        detail: { order_code: result.order_code, order_number: result.order_number },
       }))
 
-      // Supabase RPC 직접 호출 (static export 환경)
-      const supabase = getSupabaseClient()
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const { data, error: rpcError } = await (supabase as any).rpc('create_order', {
-        p_account_code:  account.code,
-        p_orderer_name:  finalOrderer,
-        p_orderer_phone: finalPhone,
-        p_method:        method,
-        p_items:         payload,
-        p_delivery_fee:  method === '배달' ? DELIVERY_FEE : 0,
-        p_note: (() => {
-          const parts: string[] = []
-          if (method === '배달' && baseAddress.trim()) parts.push(`[배달주소] ${baseAddress.trim()}`)
-          if (method === '배달' && detailAddress.trim()) parts.push(`[배달상세] ${detailAddress.trim()}`)
-          if (method === '배달' && deliveryRemarks.trim()) parts.push(`[배달요청] ${deliveryRemarks.trim()}`)
-          if (remarks.trim()) parts.push(remarks.trim())
-          return parts.length > 0 ? parts.join(' / ') : null
-        })(),
-      })
-
-      if (rpcError || !data) {
-        console.error('[checkout] RPC error:', rpcError)
-        setError('주문 처리에 실패했습니다. 다시 시도해주세요.')
-        track('order_fail', { error: String(rpcError?.message ?? 'unknown') })
-        return
-      }
-
-      // RPC는 { order_code, order_number } jsonb를 반환
-      const result = data as { order_code: string; order_number: string }
       track('purchase', {
         transaction_id: result.order_code,
         value:          total,
@@ -202,12 +270,12 @@ export default function CheckoutPage() {
         items:          items.map(i => ({ item_name: i.menuName, quantity: i.qty, price: i.basePrice })),
         method,
       })
-      saveAndRedirect(result.order_code, result.order_number)
     } catch (err) {
       console.error('[checkout] unexpected error:', err)
-      setError('주문 처리에 실패했습니다. 다시 시도해주세요.')
-    } finally {
-      setIsSubmitting(false)
+      const reason = '주문 처리에 실패했습니다.'
+      sessionStorage.setItem('last_order_failed',      '1')
+      sessionStorage.setItem('last_order_fail_reason', reason)
+      window.dispatchEvent(new CustomEvent('order_rpc_failed', { detail: { reason } }))
     }
   }
 
@@ -336,15 +404,16 @@ export default function CheckoutPage() {
             </div>
             <div>
               <label className="text-sm font-bold text-[#1E1E1E] mb-2 block">배달 요청사항</label>
-              <input
-                type="text"
-                value={deliveryRemarks}
-                onChange={e => setDeliveryRemarks(e.target.value)}
-                onBlur={e => track('delivery_remarks_input', { filled: e.target.value.trim().length > 0 })}
-                placeholder="예: 문 앞에 놓아주세요"
-                maxLength={100}
-                className="w-full border border-[#D7D7D7] rounded-xl px-4 py-3 text-sm text-[#1E1E1E] placeholder:text-[#D7D7D7] outline-none focus:border-[#1E1E1E] transition-colors"
-              />
+              <button
+                type="button"
+                onClick={openDeliveryModal}
+                className="w-full border border-[#D7D7D7] rounded-xl px-4 py-3 text-sm text-[#1E1E1E] flex items-center justify-between text-left"
+              >
+                <span className="flex-1 truncate">{deliveryRemarks}</span>
+                <svg className="flex-shrink-0 ml-2 w-4 h-4 text-[#727272]" viewBox="0 0 16 16" fill="none">
+                  <path d="M4 6l4 4 4-4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+                </svg>
+              </button>
             </div>
           </section>
         )}
@@ -456,6 +525,71 @@ export default function CheckoutPage() {
           </div>
         )}
       </div>
+
+      {/* 배달 요청사항 바텀 모달 */}
+      {showDeliveryModal && (
+        <>
+          <div className="fixed inset-0 bg-black/40 z-40" onClick={closeDeliveryModal} />
+          <div className="fixed bottom-0 left-0 right-0 max-w-[430px] mx-auto bg-white rounded-t-2xl z-50">
+            {/* 모달 헤더 */}
+            <div className="flex items-center justify-between px-5 pt-5 pb-4 border-b border-[#F0F0F0]">
+              <h3 className="text-[16px] font-bold text-[#1E1E1E]">배달 요청사항</h3>
+              <button
+                onClick={closeDeliveryModal}
+                className="w-8 h-8 flex items-center justify-center text-[#727272] text-lg leading-none"
+              >
+                ✕
+              </button>
+            </div>
+
+            {/* 라디오 옵션 */}
+            <div className="px-5 pt-1 pb-2">
+              {DELIVERY_REMARK_OPTIONS.map((option) => (
+                <label
+                  key={option}
+                  className="flex items-center gap-3 py-3.5 border-b border-[#F0F0F0] last:border-0 cursor-pointer"
+                  onClick={() => setDraftOption(option)}
+                >
+                  <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center flex-shrink-0 transition-colors ${
+                    draftOption === option ? 'border-[#1E1E1E]' : 'border-[#D7D7D7]'
+                  }`}>
+                    {draftOption === option && (
+                      <div className="w-2.5 h-2.5 rounded-full bg-[#1E1E1E]" />
+                    )}
+                  </div>
+                  <span className={`text-[14px] select-none ${draftOption === option ? 'font-semibold text-[#1E1E1E]' : 'text-[#727272]'}`}>
+                    {option}
+                  </span>
+                </label>
+              ))}
+
+              {/* 직접 입력 텍스트필드 — 부드럽게 나타남 */}
+              <div className={`overflow-hidden transition-all duration-300 ease-in-out ${
+                draftOption === '직접 입력' ? 'max-h-16 opacity-100 mb-2' : 'max-h-0 opacity-0'
+              }`}>
+                <input
+                  type="text"
+                  value={draftCustomText}
+                  onChange={e => setDraftCustomText(e.target.value)}
+                  placeholder="배달 기사에게 자세하게 요청해주세요"
+                  maxLength={20}
+                  className="w-full border border-[#D7D7D7] rounded-xl px-4 py-3 text-sm text-[#1E1E1E] placeholder:text-[#D7D7D7] outline-none focus:border-[#1E1E1E] transition-colors"
+                />
+              </div>
+            </div>
+
+            {/* 완료 버튼 */}
+            <div className="px-5 py-4 border-t border-[#F0F0F0]">
+              <button
+                onClick={confirmDeliveryOption}
+                className="w-full py-4 bg-[#1E1E1E] text-white rounded-xl font-bold text-base active:scale-95 transition-transform"
+              >
+                완료
+              </button>
+            </div>
+          </div>
+        </>
+      )}
 
       {/* Footer */}
       <footer className="flex-shrink-0 px-4 py-4 border-t border-[#D7D7D7] bg-white shadow-[0_-4px_20px_rgba(0,0,0,0.08)]">

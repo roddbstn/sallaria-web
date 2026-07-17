@@ -7,44 +7,9 @@ import { useCartStore } from '@/lib/store/cart'
 import { getSupabaseClient } from '@/lib/supabase/client'
 import { formatWon, calcSubtotal } from '@/lib/utils'
 import { track } from '@/lib/firebase'
-import type { Menu, MenuOptionGroup, SelectedOption } from '@/lib/types'
+import type { Menu, SelectedOption } from '@/lib/types'
 import OptionGroup from '@/components/menu/option-group'
-
-function mapDbMenu(row: any): Menu {
-  const options: MenuOptionGroup[] = (row.menu_option_groups ?? [])
-    .sort((a: any, b: any) => a.display_order - b.display_order)
-    .map((mog: any) => {
-      const og = mog.option_groups
-      return {
-        group: og.name,
-        required: og.is_required,
-        multi: og.is_multi,
-        items: (og.option_items ?? [])
-          .filter((it: any) => !it.is_hidden)
-          .sort((a: any, b: any) => a.display_order - b.display_order)
-          .map((it: any) => ({
-            id: it.id,
-            name: it.name,
-            plus: it.extra_price,
-            isSoldOut: it.is_sold_out,
-          })),
-      }
-    })
-
-  return {
-    code:      row.id,
-    cat:       row.category_id,
-    name:      row.name,
-    desc:      row.description ?? '',
-    price:     row.base_price,
-    emoji:     '🍽️',
-    imageUrl:  row.image_url ?? undefined,
-    popular:   row.is_popular,
-    isSoldOut: row.is_sold_out,
-    isHidden:  row.is_hidden,
-    options,
-  }
-}
+import { mapDbMenu } from '@/lib/mappers'
 
 export default function MenuDetailClient({ code }: { code: string }) {
   const router = useRouter()

@@ -149,14 +149,15 @@ function HomePageInner() {
       const supabase = getSupabaseClient()
       const codes = raw.map(e => e.order_code)
       const { data } = await supabase
-        .from('orders')
-        .select('order_code, status')
-        .in('order_code', codes)
+        .rpc('get_order_statuses', { p_order_codes: codes })
 
       const statusMap: Record<string, string> = {}
       ;(data ?? []).forEach((r: { order_code: string; status: string }) => { statusMap[r.order_code] = r.status })
 
       setHistoryList(raw.map(e => ({ ...e, status: statusMap[e.order_code] ?? null })))
+    } catch {
+      // localStorage 접근 실패(private 모드 등) 또는 JSON 파싱 실패 시 빈 목록으로 처리
+      setHistoryList([])
     } finally {
       setHistoryLoading(false)
     }
@@ -313,7 +314,7 @@ function HomePageInner() {
   return (
     <div className="flex flex-col min-h-screen bg-white">
       <div className="flex flex-col items-center pt-16 pb-4 px-5">
-        <div className="text-[28px] font-bold text-[#017333] mb-1">🥗 {storeName}</div>
+        <div className="text-[28px] font-bold text-[#017333] mb-1">{storeName}</div>
       </div>
 
       <div className="text-center px-8 mb-10">
