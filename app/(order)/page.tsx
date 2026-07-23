@@ -67,6 +67,14 @@ function HomePageInner() {
   const [historyLoading, setHistoryLoading] = useState(false)
   const [historyList,    setHistoryList]    = useState<OrderHistoryWithStatus[]>([])
 
+  // 비밀번호 찾기
+  const [forgotPin,     setForgotPin]     = useState(false)
+  const [forgotName,    setForgotName]    = useState('')
+  const [forgotPhone,   setForgotPhone]   = useState('')
+  const [forgotLoading, setForgotLoading] = useState(false)
+  const [forgotError,   setForgotError]   = useState('')
+  const [forgotResult,  setForgotResult]  = useState<{ accountName: string; pin: string } | null>(null)
+
   // 스토어명 로딩 — ?store= 우선, 없으면 ?account= 통해 store_id 조회
   useEffect(() => {
     async function loadStoreName() {
@@ -137,6 +145,53 @@ function HomePageInner() {
     loadByQr()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
+
+  function formatPhone(raw: string): string {
+    const digits = raw.replace(/\D/g, '').slice(0, 11)
+    if (digits.length <= 3) return digits
+    if (digits.length <= 7) return `${digits.slice(0, 3)}-${digits.slice(3)}`
+    return `${digits.slice(0, 3)}-${digits.slice(3, 7)}-${digits.slice(7)}`
+  }
+
+  async function handleForgotSubmit() {
+    setForgotError('')
+    const nameClean  = forgotName.trim()
+    const phoneClean = forgotPhone.replace(/\D/g, '')
+    if (!nameClean || phoneClean.length < 10) {
+      setForgotError('이름과 휴대폰 번호를 정확히 입력해 주세요.')
+      return
+    }
+    if (!storeId && !qrAccountCode) {
+      setForgotError('매장 QR 코드를 스캔한 후 이용해 주세요.')
+      return
+    }
+    setForgotLoading(true)
+    try {
+      const supabase = getSupabaseClient()
+      // 서버사이드 RPC: 전체 accounts를 내려보내지 않고 서버에서 검증 후 PIN만 반환
+      const { data, error } = await supabase.rpc('find_pin', {
+        p_store_id:     storeId ?? null,
+        p_name:         nameClean,
+        p_phone:        forgotPhone,
+        p_account_code: qrAccountCode ?? null,
+      })
+
+      if (error) {
+        setForgotError('조회에 실패했습니다. 잠시 후 다시 시도해 주세요.')
+        return
+      }
+
+      const match = (data as { account_name: string; pin_code: string }[] | null)?.[0]
+      if (!match) {
+        setForgotError('일치하는 정보를 찾을 수 없습니다. 이름과 휴대폰 번호를 확인해 주세요.')
+        return
+      }
+
+      setForgotResult({ accountName: match.account_name, pin: match.pin_code })
+    } finally {
+      setForgotLoading(false)
+    }
+  }
 
   async function openHistory() {
     track('order_history_open')
@@ -294,6 +349,93 @@ function HomePageInner() {
     )
   }
 
+  // ── 비밀번호 찾기 결과 화면 ──
+  if (forgotPin && forgotResult) {
+    return (
+      <div className="flex flex-col min-h-screen bg-white px-6 pt-16">
+        <button
+          onClick={() => { setForgotPin(false); setForgotResult(null); setForgotName(''); setForgotPhone('') }}
+          className="text-[13px] text-[#727272] mb-10 self-start"
+        >
+          ← 돌아가기
+        </button>
+        <div className="flex flex-col gap-4">
+          <div className="w-16 h-16 rounded-full flex items-center justify-center mb-2"
+            style={{ background: 'linear-gradient(135deg, #02a84e 0%, #017333 60%, #015a28 100%)' }}>
+            <span className="text-white text-3xl font-bold leading-none">✓</span>
+          </div>
+          <p className="text-[22px] font-bold text-[#1E1E1E] leading-snug">
+            {forgotResult.accountName} 고객님,<br />
+            비밀번호는 <span className="text-[#017333]">{forgotResult.pin}</span> 입니다.
+          </p>
+          <p className="text-[13px] text-[#727272]">확인 후 비밀번호를 입력해 로그인하세요.</p>
+        </div>
+        <div className="mt-auto pb-10">
+          <button
+            onClick={() => { setForgotPin(false); setForgotResult(null); setForgotName(''); setForgotPhone('') }}
+            className="w-full py-4 rounded-2xl font-bold text-[16px] text-white"
+            style={{ background: 'linear-gradient(135deg, #02a84e 0%, #017333 60%, #015a28 100%)' }}
+          >
+            비밀번호 입력하러 가기
+          </button>
+        </div>
+      </div>
+    )
+  }
+
+  // ── 비밀번호 찾기 인증 화면 ──
+  if (forgotPin) {
+    return (
+      <div className="flex flex-col min-h-screen bg-white px-6 pt-16">
+        <button
+          onClick={() => { setForgotPin(false); setForgotError('') }}
+          className="text-[13px] text-[#727272] mb-8 self-start"
+        >
+          ← 돌아가기
+        </button>
+        <h1 className="text-[22px] font-bold text-[#1E1E1E] leading-snug mb-8">
+          선결제 고객 확인을 위해<br />인증을 진행해 주세요
+        </h1>
+
+        <div className="flex flex-col gap-4">
+          <div>
+            <input
+              type="text"
+              value={forgotName}
+              onChange={e => { setForgotName(e.target.value); setForgotError('') }}
+              placeholder="대표자 이름"
+              className="w-full border border-[#D7D7D7] rounded-xl px-4 py-3.5 text-[15px] text-[#1E1E1E] placeholder-[#C0C0C0] focus:outline-none focus:border-[#017333]"
+            />
+          </div>
+          <div>
+            <input
+              type="tel"
+              inputMode="numeric"
+              value={forgotPhone}
+              onChange={e => { setForgotPhone(formatPhone(e.target.value)); setForgotError('') }}
+              placeholder="휴대폰 번호 (010-0000-0000)"
+              className="w-full border border-[#D7D7D7] rounded-xl px-4 py-3.5 text-[15px] text-[#1E1E1E] placeholder-[#C0C0C0] focus:outline-none focus:border-[#017333]"
+            />
+          </div>
+          {forgotError && (
+            <p className="text-[13px] text-[#C92A2A]">{forgotError}</p>
+          )}
+        </div>
+
+        <div className="mt-auto pb-10 pt-8">
+          <button
+            onClick={handleForgotSubmit}
+            disabled={forgotLoading}
+            className="w-full py-4 rounded-2xl font-bold text-[16px] text-white disabled:opacity-50"
+            style={{ background: 'linear-gradient(135deg, #02a84e 0%, #017333 60%, #015a28 100%)' }}
+          >
+            {forgotLoading ? '확인 중...' : '확인'}
+          </button>
+        </div>
+      </div>
+    )
+  }
+
   // ── PIN 입력 ──
   const numpadRows = [
     ['1', '2', '3'],
@@ -359,6 +501,16 @@ function HomePageInner() {
         )}
       </div>
 
+      {/* 비밀번호 찾기 버튼 */}
+      <div className="flex justify-center mb-4">
+        <button
+          onClick={() => { setForgotPin(true); setForgotError(''); setForgotName(''); setForgotPhone(''); setForgotResult(null) }}
+          className="text-[13px] text-[#727272] underline underline-offset-2"
+        >
+          비밀번호를 잊으셨나요?
+        </button>
+      </div>
+
       <div className="px-6 flex-1">
         <div className="grid grid-cols-3 gap-3">
           {numpadRows.flat().map((key, idx) => {
@@ -391,14 +543,13 @@ function HomePageInner() {
         </div>
       </div>
 
-      {/* 내 주문 확인 버튼 */}
-      <div className="pb-8 pt-2 flex justify-center">
-        <button
-          onClick={openHistory}
-          className="text-[13px] text-[#727272] underline underline-offset-2"
+      <div className="flex justify-center pb-8 pt-2">
+        <a
+          href="/privacy"
+          className="text-[11px] text-[#AAAAAA] underline underline-offset-2"
         >
-          내 주문 확인
-        </button>
+          개인정보처리방침
+        </a>
       </div>
 
       {/* 내 주문 모달 */}

@@ -35,11 +35,11 @@ export default function MenuDetailClient({ code }: { code: string }) {
         .from('menus')
         .select(`
           id, category_id, name, description, base_price, image_url,
-          is_popular, is_sold_out, is_hidden,
+          is_popular, is_recommended, is_new, is_sold_out, is_hidden,
           menu_option_groups (
             display_order,
             option_groups (
-              id, name, is_required, is_multi, max_select,
+              id, name, is_required, is_multi, max_select, is_sold_out, is_hidden,
               option_items ( id, name, extra_price, is_sold_out, is_hidden, display_order )
             )
           )
@@ -148,6 +148,7 @@ export default function MenuDetailClient({ code }: { code: string }) {
     } else {
       addItem(menu.code, menu.name, menu.price, qty, selectedOptions, menu.imageUrl)
       track('add_to_cart', { item_name: menu.name, price: menu.price, quantity: qty, value: subtotal, currency: 'KRW' })
+      router.refresh()  // /menu 라우터 캐시 무효화 → 장바구니 바 즉시 반영
       router.back()
     }
   }
@@ -182,6 +183,13 @@ export default function MenuDetailClient({ code }: { code: string }) {
         </div>
 
         <div className="px-5 pt-5 pb-4">
+          {(menu.popular || menu.recommended || menu.isNew) && (
+            <div className="flex gap-1 flex-wrap mb-2">
+              {menu.popular     && <span style={{ backgroundColor: '#F97316', color: 'white' }} className="inline-block text-[13px] font-bold px-[8px] py-[2px] rounded-full">인기</span>}
+              {menu.recommended && <span style={{ backgroundColor: '#16a84c', color: 'white' }} className="inline-block text-[13px] font-bold px-[8px] py-[2px] rounded-full">추천</span>}
+              {menu.isNew       && <span style={{ backgroundColor: '#1D6FE8', color: 'white' }} className="inline-block text-[13px] font-bold px-[8px] py-[2px] rounded-full">신메뉴</span>}
+            </div>
+          )}
           <h1 className="text-[20px] font-[800] text-[#1E1E1E] mb-1">{menu.name}</h1>
           <p className="text-[13px] text-[#727272] leading-relaxed">{menu.desc}</p>
           <p className="text-[18px] font-bold text-[#1E1E1E] mt-3">{formatWon(menu.price)}</p>

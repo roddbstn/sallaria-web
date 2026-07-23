@@ -58,6 +58,26 @@ export default function CheckoutPage() {
   const [draftCustomText, setDraftCustomText] = useState('')
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [privacyAgreed, setPrivacyAgreed] = useState(false)
+
+  // 이전 주문자 자동완성 칩
+  const [members, setMembers] = useState<{ id: string; name: string; phone: string | null; order_count: number }[]>([])
+  const [selectedMemberId, setSelectedMemberId] = useState<string | null>(null)
+
+  // 이전 주문자 목록 로드 (과/기업 거래처만)
+  useEffect(() => {
+    if (!account || account.type === '개인') return
+    const supabase = getSupabaseClient()
+    supabase
+      .from('account_members')
+      .select('id, name, phone, order_count')
+      .eq('account_code', account.code)
+      .order('order_count', { ascending: false })
+      .limit(10)
+      .then(({ data }: { data: typeof members | null }) => {
+        if (data && data.length > 0) setMembers(data)
+      })
+  }, [account?.code])
 
   // Kakao 우편번호 스크립트 동적 로드
   useEffect(() => {
@@ -87,7 +107,17 @@ export default function CheckoutPage() {
     return `${digits.slice(0,3)}-${digits.slice(3,7)}-${digits.slice(7)}`
   }
 
-  const isPhoneValid = phoneNumber.replace(/\D/g, '').length === 11
+  function maskPhone(raw: string | null): string {
+    if (!raw) return ''
+    const digits = raw.replace(/\D/g, '')
+    if (digits.length < 8) return raw
+    return `${digits.slice(0,3)}-****-${digits.slice(-4)}`
+  }
+
+  // 칩 선택 시 입력 필드는 마스킹 표시 — 실제 번호는 members 배열에서 직접 참조
+  const isPhoneValid = selectedMemberId
+    ? !!members.find(m => m.id === selectedMemberId)?.phone
+    : phoneNumber.replace(/\D/g, '').length === 11
 
   function openDeliveryModal() {
     const isPredefined = DELIVERY_REMARK_OPTIONS.slice(0, -1).includes(deliveryRemarks)
@@ -149,7 +179,11 @@ export default function CheckoutPage() {
     setError(null)
 
     const finalOrderer = isPersonal ? account.name : ordererName.trim()
-    const finalPhone   = isPersonal ? (account.contactPhone ?? '') : phoneNumber
+    // 칩 선택 시 phoneNumber는 마스킹 표시 — 실제 번호는 members 배열에서 가져옴
+    const realPhone    = selectedMemberId
+      ? (members.find(m => m.id === selectedMemberId)?.phone ?? phoneNumber)
+      : phoneNumber
+    const finalPhone   = isPersonal ? (account.contactPhone ?? '') : realPhone
     setOrderer(finalOrderer)
     setPhone(finalPhone)
 
@@ -198,7 +232,40 @@ export default function CheckoutPage() {
     clearCart()
     router.push('/success')  // 즉시 이동 — 아래 RPC는 백그라운드 실행
 
-    // ── 3. 백그라운드 RPC (keepalive fetch — navigation 후에도 요청 유지) ──
+    // ── 3. 데모 모드: demo_orders 테이블에 INSERT 후 성공 이벤트 ──
+    if (account.isDemo) {
+      const supabase = getSupabaseClient()
+      const demoItems = items.map(item => ({
+        name: item.menuName,
+        qty: item.qty,
+        options: item.selectedOptions.map((o: { optionName: string }) => o.optionName).filter(Boolean).join(', '),
+        price: item.subtotal,
+      }))
+
+      const { data: demoOrder } = await supabase
+        .from('demo_orders')
+        .insert({
+          account_name: account.name,
+          orderer: finalOrderer || '익명',
+          method: method || '포장',
+          items: demoItems,
+          subtotal: subtotal,
+          delivery_fee: fee,
+          total: total,
+        })
+        .select('id')
+        .single()
+
+      const demoCode = demoOrder?.id ?? `DEMO-${Date.now()}`
+      sessionStorage.setItem('last_order_code',   demoCode)
+      sessionStorage.setItem('last_order_number', 'D001')
+      window.dispatchEvent(new CustomEvent('order_rpc_done', {
+        detail: { order_code: demoCode, order_number: 'D001' },
+      }))
+      return
+    }
+
+    // ── 4. 백그라운드 RPC (keepalive fetch — navigation 후에도 요청 유지) ──
     try {
       const SUPABASE_URL      = process.env.NEXT_PUBLIC_SUPABASE_URL!
       const SUPABASE_ANON_KEY = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
@@ -305,6 +372,13 @@ export default function CheckoutPage() {
         </h1>
       </header>
 
+      {/* 데모 모드 배너 */}
+      {account?.isDemo && (
+        <div className="bg-[#1E1E1E] text-white text-center text-[12px] font-semibold py-2 px-4 flex-shrink-0">
+          🎮 데모 모드 — 실제 주문은 접수되지 않습니다
+        </div>
+      )}
+
       {/* Body */}
       <div className="flex-1 overflow-y-auto px-4 py-4 space-y-5">
         {/* 거래처 + 주문자 입력 */}
@@ -312,6 +386,33 @@ export default function CheckoutPage() {
           <p className="text-base font-bold text-[#1E1E1E]">{account?.name}</p>
           {!isPersonal && (
             <>
+              {/* 이전 주문자 칩 */}
+              {members.length > 0 && (
+                <div>
+                  <p className="text-[12px] font-semibold text-[#727272] mb-2">이전 주문자</p>
+                  <div className="flex flex-wrap gap-2">
+                    {members.map(m => (
+                      <button
+                        key={m.id}
+                        type="button"
+                        onClick={() => {
+                          setOrdererName(m.name)
+                          setPhoneNumber(maskPhone(m.phone))  // 입력 필드엔 마스킹 표시
+                          setSelectedMemberId(m.id)
+                          track('member_chip_click', { account_code: account?.code ?? '' })
+                        }}
+                        className={`px-3 py-1.5 rounded-full text-[13px] font-semibold border transition-colors ${
+                          selectedMemberId === m.id
+                            ? 'bg-[#1E1E1E] text-white border-[#1E1E1E]'
+                            : 'bg-[#F5F5F5] text-[#1E1E1E] border-transparent'
+                        }`}
+                      >
+                        {m.name}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
               <div>
                 <label className="text-[12px] font-semibold text-[#727272] mb-1.5 block">
                   이름 <span className="text-[#C92A2A]">*</span>
@@ -319,7 +420,7 @@ export default function CheckoutPage() {
                 <input
                   type="text"
                   value={ordererName}
-                  onChange={e => setOrdererName(e.target.value)}
+                  onChange={e => { setOrdererName(e.target.value); setSelectedMemberId(null) }}
                   onBlur={e => track('name_input', { filled: e.target.value.trim().length > 0 })}
                   placeholder="예: 김지은"
                   maxLength={20}
@@ -333,7 +434,7 @@ export default function CheckoutPage() {
                 <input
                   type="tel"
                   value={phoneNumber}
-                  onChange={e => setPhoneNumber(formatPhone(e.target.value))}
+                  onChange={e => { setPhoneNumber(formatPhone(e.target.value)); setSelectedMemberId(null) }}
                   onBlur={e => track('phone_input', { valid: e.target.value.replace(/\D/g, '').length === 11 })}
                   placeholder="010-0000-0000"
                   inputMode="numeric"
@@ -592,12 +693,31 @@ export default function CheckoutPage() {
       )}
 
       {/* Footer */}
-      <footer className="flex-shrink-0 px-4 py-4 border-t border-[#D7D7D7] bg-white shadow-[0_-4px_20px_rgba(0,0,0,0.08)]">
+      <footer className="flex-shrink-0 px-4 pt-3 pb-4 border-t border-[#D7D7D7] bg-white shadow-[0_-4px_20px_rgba(0,0,0,0.08)]">
+        {/* 개인정보 수집 동의 */}
+        {!isPersonal && (
+          <label className="flex items-start gap-2.5 mb-3 cursor-pointer">
+            <div
+              onClick={() => setPrivacyAgreed(v => !v)}
+              className={`w-5 h-5 rounded flex items-center justify-center flex-shrink-0 mt-0.5 border-2 transition-colors ${
+                privacyAgreed ? 'bg-[#1E1E1E] border-[#1E1E1E]' : 'border-[#D7D7D7]'
+              }`}
+            >
+              {privacyAgreed && <span className="text-white text-[11px] font-bold leading-none">✓</span>}
+            </div>
+            <span className="text-[12px] text-[#727272] leading-relaxed">
+              주문자 이름·전화번호 수집에 동의합니다.{' '}
+              <a href="/privacy" className="underline text-[#017333]" onClick={e => e.stopPropagation()}>
+                개인정보처리방침
+              </a>
+            </span>
+          </label>
+        )}
         <button
           onClick={handleOrder}
-          disabled={isSubmitting || !method || (!isPersonal && (!ordererName.trim() || !isPhoneValid)) || (method === '배달' && !baseAddress.trim())}
+          disabled={isSubmitting || !method || (!isPersonal && (!ordererName.trim() || !isPhoneValid || !privacyAgreed)) || (method === '배달' && !baseAddress.trim())}
           className={`w-full py-4 rounded-xl font-bold text-white text-base transition-colors ${
-            isSubmitting || !method || (!isPersonal && (!ordererName.trim() || !isPhoneValid)) || (method === '배달' && !baseAddress.trim()) ? 'bg-[#CCC] cursor-not-allowed' : 'bg-[#1E1E1E] active:scale-95'
+            isSubmitting || !method || (!isPersonal && (!ordererName.trim() || !isPhoneValid || !privacyAgreed)) || (method === '배달' && !baseAddress.trim()) ? 'bg-[#CCC] cursor-not-allowed' : 'bg-[#1E1E1E] active:scale-95'
           }`}
         >
           {isSubmitting ? '주문 중...' : '주문하기'}

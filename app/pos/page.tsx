@@ -424,9 +424,9 @@ export default function PosPage() {
                           </td>
                           <td className="px-4 py-3">
                             <span className="font-semibold text-[#1E1E1E]">{menu.name}</span>
-                            {menu.popular && (
-                              <span className="ml-2 text-[10px] font-bold text-[#E65100] bg-[#FFF3E0] px-1.5 py-0.5 rounded-full">인기</span>
-                            )}
+                            {menu.popular     && <span className="ml-1 text-[10px] font-bold text-white bg-[#F97316] px-1.5 py-0.5 rounded-full">인기</span>}
+                            {menu.recommended && <span className="ml-1 text-[10px] font-bold text-white bg-[#16a84c] px-1.5 py-0.5 rounded-full">추천</span>}
+                            {menu.isNew       && <span className="ml-1 text-[10px] font-bold text-white bg-[#1D6FE8] px-1.5 py-0.5 rounded-full">신메뉴</span>}
                           </td>
                           <td className="px-4 py-3 text-[#727272]">{CAT_NAME[menu.cat] ?? menu.cat}</td>
                           <td className="px-4 py-3 text-right font-semibold text-[#1E1E1E]">{formatWon(menu.price)}</td>

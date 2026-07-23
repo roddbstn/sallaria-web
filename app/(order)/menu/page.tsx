@@ -43,6 +43,30 @@ function MenuPageInner() {
   const isScrollingToRef = useRef(false)
   const scrollRef = useRef<HTMLDivElement>(null)  // 내부 스크롤 컨테이너
 
+  // ── 검색 상태 ──────────────────────────────────────────────────────────────
+  const [searchOpen, setSearchOpen] = useState(false)
+  const [searchQuery, setSearchQuery] = useState('')
+  const [searchActiveCategory, setSearchActiveCategory] = useState('')
+  const [searchShowDropdown, setSearchShowDropdown] = useState(false)
+  const searchInputRef    = useRef<HTMLInputElement>(null)
+  const searchScrollRef   = useRef<HTMLDivElement>(null)
+  const searchSectionRefs = useRef<Record<string, HTMLDivElement | null>>({})
+  const searchTabRefs     = useRef<Record<string, HTMLButtonElement | null>>({})
+  const searchTabsRef     = useRef<HTMLDivElement>(null)
+  const searchIsScrolling = useRef(false)
+
+  // 검색 결과: 품절 제외 + 메뉴명 필터 (빈 쿼리면 전체)
+  const searchResults = useMemo(() => {
+    const q = searchQuery.trim()
+    return menus.filter(m => !m.isSoldOut && (q === '' || m.name.includes(q)))
+  }, [menus, searchQuery])
+
+  // 검색 결과에 메뉴가 있는 카테고리만
+  const searchCategories = useMemo(() => {
+    const ids = new Set(searchResults.map(m => m.cat))
+    return categories.filter(c => ids.has(c.id))
+  }, [categories, searchResults])
+
   // hydration 완료 여부 추적
   const [hydrated, setHydrated] = useState(() => useSessionStore.persist.hasHydrated())
   useEffect(() => {
@@ -123,11 +147,11 @@ function MenuPageInner() {
           .from('menus')
           .select(`
             id, category_id, name, description, base_price, image_url,
-            is_popular, is_sold_out, is_hidden, display_order,
+            is_popular, is_recommended, is_new, is_sold_out, is_hidden, display_order,
             menu_option_groups (
               display_order,
               option_groups (
-                id, name, is_required, is_multi, max_select,
+                id, name, is_required, is_multi, max_select, is_sold_out, is_hidden,
                 option_items ( id, name, extra_price, is_sold_out, is_hidden, display_order )
               )
             )
@@ -215,6 +239,70 @@ function MenuPageInner() {
     }
   }, [activeCategory])
 
+  // 검색 모달 열릴 때 input 포커스
+  useEffect(() => {
+    if (!searchOpen) return
+    const t = setTimeout(() => searchInputRef.current?.focus(), 150)
+    return () => clearTimeout(t)
+  }, [searchOpen])
+
+  // 검색 결과 바뀔 때 첫 번째 카테고리로 active 초기화
+  useEffect(() => {
+    if (searchOpen && searchCategories.length > 0) {
+      setSearchActiveCategory(searchCategories[0].id)
+    }
+  }, [searchOpen, searchCategories])
+
+  // 검색 모달 내 스크롤 스파이
+  useEffect(() => {
+    if (!searchOpen) return
+    const container = searchScrollRef.current
+    if (!container) return
+    function spy() {
+      if (searchIsScrolling.current) return
+      if (searchCategories.length === 0) return
+      const tabsBottom = searchTabsRef.current?.getBoundingClientRect().bottom ?? 56
+      let current = searchCategories[0].id
+      for (const cat of searchCategories) {
+        const el = searchSectionRefs.current[cat.id]
+        if (!el) continue
+        if (el.getBoundingClientRect().top <= tabsBottom) current = cat.id
+      }
+      setSearchActiveCategory(current)
+    }
+    container.addEventListener('scroll', spy, { passive: true })
+    return () => container.removeEventListener('scroll', spy)
+  }, [searchOpen, searchCategories])
+
+  // 검색 모달 활성 탭 자동 수평 스크롤
+  useEffect(() => {
+    if (!searchOpen) return
+    const btn = searchTabRefs.current[searchActiveCategory]
+    const bar = searchTabsRef.current
+    if (!btn || !bar) return
+    const btnLeft  = btn.offsetLeft
+    const btnRight = btnLeft + btn.offsetWidth
+    const barLeft  = bar.scrollLeft
+    const barRight = barLeft + bar.offsetWidth
+    if (btnLeft < barLeft + 16) {
+      bar.scrollTo({ left: btnLeft - 16, behavior: 'smooth' })
+    } else if (btnRight > barRight - 16) {
+      bar.scrollTo({ left: btnRight - bar.offsetWidth + 16, behavior: 'smooth' })
+    }
+  }, [searchActiveCategory, searchOpen])
+
+  const scrollToSearchCategory = useCallback((catId: string) => {
+    const el = searchSectionRefs.current[catId]
+    const container = searchScrollRef.current
+    if (!el || !container) return
+    searchIsScrolling.current = true
+    setSearchActiveCategory(catId)
+    const tabsBottom = searchTabsRef.current?.getBoundingClientRect().bottom ?? 56
+    const elTop = el.getBoundingClientRect().top
+    container.scrollTo({ top: container.scrollTop + (elTop - tabsBottom), behavior: 'smooth' })
+    setTimeout(() => { searchIsScrolling.current = false }, 800)
+  }, [])
+
   const scrollToCategory = useCallback((catId: string, source: 'tab' | 'dropdown' = 'tab') => {
     const el = sectionRefs.current[catId]
     const container = scrollRef.current
@@ -282,6 +370,7 @@ function MenuPageInner() {
       className="fixed inset-0 flex flex-col bg-white"
       style={{ paddingTop: 'env(safe-area-inset-top)' }}
     >
+
       {/* ── 내부 스크롤 컨테이너 ── */}
       <div className="flex-1 overflow-y-auto" ref={scrollRef}>
 
@@ -384,13 +473,25 @@ function MenuPageInner() {
       {showScrollTop && (
         <button
           onClick={() => scrollRef.current?.scrollTo({ top: 0, behavior: 'smooth' })}
-          className="absolute right-5 z-20 w-10 h-10 bg-white border border-[#D7D7D7] rounded-full shadow-md flex items-center justify-center text-[#727272] text-[13px]"
-          style={{ bottom: qty > 0 ? '90px' : '20px' }}
+          className="fixed right-5 z-20 w-10 h-10 bg-white border border-[#D7D7D7] rounded-full shadow-md flex items-center justify-center text-[#727272] text-[13px]"
+          style={{ bottom: qty > 0 ? '160px' : '80px' }}
           aria-label="맨 위로"
         >
           ↑
         </button>
       )}
+
+      {/* 검색 플로팅 버튼 */}
+      <button
+        onClick={() => { setSearchQuery(''); setSearchOpen(true) }}
+        className="fixed right-5 z-20 w-12 h-12 bg-[#1E1E1E] text-white rounded-full shadow-lg flex items-center justify-center"
+        style={{ bottom: qty > 0 ? '100px' : '20px' }}
+        aria-label="메뉴 검색"
+      >
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+          <circle cx="11" cy="11" r="8" /><line x1="21" y1="21" x2="16.65" y2="16.65" />
+        </svg>
+      </button>
 
       {/* 카테고리 모달 */}
       {showDropdown && (
@@ -437,6 +538,182 @@ function MenuPageInner() {
             <span>장바구니 보기</span>
             <span>{formatWon(subtotal)}</span>
           </button>
+        </div>
+      )}
+
+      {/* ── 검색 모달 ── */}
+      {searchOpen && (
+        <div
+          className="fixed inset-0 z-40 bg-black/40"
+          style={{ animation: 'backdropFadeIn 0.2s ease', paddingTop: 'env(safe-area-inset-top)' }}
+          onClick={() => setSearchOpen(false)}
+        >
+          <div
+            className="absolute left-0 right-0 bottom-0 bg-white rounded-t-2xl flex flex-col overflow-hidden"
+            style={{
+              top: 'calc(48px + env(safe-area-inset-top))',
+              animation: 'searchModalOpen 0.3s cubic-bezier(0.34, 1.4, 0.64, 1)',
+              transformOrigin: 'bottom right',
+            }}
+            onClick={e => e.stopPropagation()}
+          >
+            {/* 헤더 */}
+            <div className="px-5 pt-5 pb-3 flex items-center justify-between flex-shrink-0">
+              <h2 className="text-[18px] font-extrabold text-[#1E1E1E]">메뉴 검색</h2>
+              <button
+                onClick={() => setSearchOpen(false)}
+                className="w-9 h-9 flex items-center justify-center text-[#727272]"
+                aria-label="닫기"
+              >
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M6 6l12 12M18 6L6 18" />
+                </svg>
+              </button>
+            </div>
+
+            {/* 검색 입력 */}
+            <div className="px-5 pb-3 flex-shrink-0">
+              <div className="flex items-center gap-2 bg-[#F5F5F5] rounded-xl px-4 py-3">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#727272" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                  <circle cx="11" cy="11" r="8" /><line x1="21" y1="21" x2="16.65" y2="16.65" />
+                </svg>
+                <input
+                  ref={searchInputRef}
+                  value={searchQuery}
+                  onChange={e => setSearchQuery(e.target.value)}
+                  placeholder="메뉴 이름을 입력하세요"
+                  className="flex-1 bg-transparent outline-none text-[15px] text-[#1E1E1E] placeholder:text-[#727272]"
+                />
+                {searchQuery && (
+                  <button onClick={() => setSearchQuery('')} className="text-[#727272] text-[16px] leading-none">✕</button>
+                )}
+              </div>
+            </div>
+
+            {/* 스크롤 영역 (카테고리 탭 + 메뉴 목록) */}
+            <div ref={searchScrollRef} className="flex-1 overflow-y-auto bg-white">
+
+              {/* 카테고리 탭 sticky */}
+              {searchCategories.length > 0 && (
+                <div className="sticky top-0 z-10 bg-white">
+                  <div className="flex items-center">
+                    <div
+                      ref={searchTabsRef}
+                      className="flex gap-2 overflow-x-auto px-5 py-3 flex-1"
+                      style={{ scrollbarWidth: 'none' }}
+                    >
+                      {searchCategories.map(cat => (
+                        <button
+                          key={cat.id}
+                          ref={el => { searchTabRefs.current[cat.id] = el }}
+                          onClick={() => scrollToSearchCategory(cat.id)}
+                          className={[
+                            'flex-shrink-0 px-[18px] py-[9px] text-[14px] font-semibold transition-colors rounded-[27.5px]',
+                            searchActiveCategory === cat.id
+                              ? 'bg-[#1E1E1E] text-white'
+                              : 'bg-[#FAFAFA] text-[#727272]',
+                          ].join(' ')}
+                        >
+                          {cat.name}
+                        </button>
+                      ))}
+                    </div>
+                    <button
+                      onClick={() => setSearchShowDropdown(v => !v)}
+                      className="flex-shrink-0 w-10 h-10 mr-4 bg-[#FAFAFA] border border-[#D7D7D7] rounded-full flex items-center justify-center text-[#727272]"
+                      aria-label="전체 카테고리"
+                    >
+                      <svg
+                        className="transition-transform duration-200"
+                        style={{ transform: searchShowDropdown ? 'rotate(-90deg)' : 'rotate(90deg)', width: 22, height: 22 }}
+                        viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"
+                      >
+                        <polyline points="9 6 15 12 9 18" />
+                      </svg>
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {/* 메뉴 목록 */}
+              {searchCategories.length > 0 ? (
+                <div className="pb-10">
+                  {searchCategories.map(cat => (
+                    <div key={cat.id}>
+                      <div
+                        ref={el => { searchSectionRefs.current[cat.id] = el }}
+                        className="h-2 bg-[#F5F5F5] mt-2"
+                      />
+                      <div className="px-5 pt-5 pb-1">
+                        <h2 className="text-[20px] font-bold text-[#1E1E1E]">{cat.name}</h2>
+                      </div>
+                      <div className="px-5">
+                        {searchResults.filter(m => m.cat === cat.id).map(menu => (
+                          <MenuCard
+                            key={menu.code}
+                            menu={menu}
+                            onClick={() => {
+                              track('search_menu_click', { menu_name: menu.name, query: searchQuery.trim() })
+                              setSearchOpen(false)
+                              router.push(`/menu?item=${menu.code}`)
+                            }}
+                          />
+                        ))}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : searchQuery.trim() ? (
+                <div className="flex flex-col items-center justify-center py-24 px-8 text-center">
+                  <p className="text-[40px] mb-4">🔍</p>
+                  <p className="text-[16px] font-semibold text-[#1E1E1E]">검색 결과가 없습니다</p>
+                  <p className="text-[13px] text-[#727272] mt-1">다른 키워드로 검색해 보세요</p>
+                </div>
+              ) : null}
+            </div>
+
+            {/* 검색 내 카테고리 드롭다운 */}
+            {searchShowDropdown && (
+              <div
+                className="absolute inset-0 z-20 flex items-center justify-center bg-black/50 rounded-t-2xl"
+                onClick={() => setSearchShowDropdown(false)}
+              >
+                <div
+                  className="bg-white rounded-2xl w-[90%] max-w-[380px] px-5 py-5"
+                  onClick={e => e.stopPropagation()}
+                >
+                  <div className="flex items-center justify-between mb-3">
+                    <p className="text-[13px] font-bold text-[#1E1E1E]">카테고리</p>
+                    <button
+                      onClick={() => setSearchShowDropdown(false)}
+                      className="w-8 h-8 flex items-center justify-center text-[#727272]"
+                      aria-label="닫기"
+                    >
+                      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                        <path d="M6 6l12 12M18 6L6 18" />
+                      </svg>
+                    </button>
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    {searchCategories.map(cat => (
+                      <button
+                        key={cat.id}
+                        onClick={() => { scrollToSearchCategory(cat.id); setSearchShowDropdown(false) }}
+                        className={[
+                          'whitespace-nowrap py-2 px-3 text-[12px] font-semibold rounded-xl transition-colors',
+                          searchActiveCategory === cat.id
+                            ? 'bg-[#1E1E1E] text-white'
+                            : 'bg-[#F5F5F5] text-[#727272]',
+                        ].join(' ')}
+                      >
+                        {cat.name}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
         </div>
       )}
 

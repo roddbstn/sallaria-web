@@ -52,6 +52,8 @@ function SuccessPageInner() {
   const [savedItems,   setSavedItems]   = useState<CartItem[]>([])
   const [menuImages,   setMenuImages]   = useState<Record<string, string>>({})
 
+  const [departedAt, setDepartedAt] = useState<string | null>(null)
+
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const channelRef      = useRef<any>(null)
   const setupRealtimeRef = useRef<((code: string) => void) | null>(null)
@@ -97,15 +99,16 @@ function SuccessPageInner() {
     function setupRealtimeAndStatus(orderCode: string) {
       const supabase = getSupabaseClient()
 
+      // get_order_statuses: 0021에서 anon GRANT 확정된 RPC (상태 감지용)
       supabase
-        .from('orders')
-        .select('status, note')
-        .eq('order_code', orderCode)
-        .maybeSingle()
+        .rpc('get_order_statuses', { p_order_codes: [orderCode] })
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        .then(({ data }: { data: any }) => {
-          if (!data) return
-          if (data.status === '조리중' || data.status === '완료') {
+        .then(({ data: rows, error }: { data: any; error: any }) => {
+          if (error) { console.error('[setup] get_order_statuses error:', error); return }
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          const row = Array.isArray(rows) ? rows.find((r: any) => r.order_code === orderCode) ?? null : null
+          if (!row) return
+          if (row.status === '조리중' || row.status === '완료') {
             setStatus('accepted')
             track('order_accepted', { order_code: orderCode })
             setAcceptedAt(prev => {
@@ -114,15 +117,28 @@ function SuccessPageInner() {
               sessionStorage.setItem('last_order_accepted_at', String(now))
               return now
             })
-            if (data.status === '완료') setPosCompleted(true)
-          } else if (data.status === '취소') {
-            const reason = data.note ?? '점주가 주문을 거부했습니다.'
+            if (row.status === '완료') setPosCompleted(true)
+          } else if (row.status === '취소') {
+            const cachedReason = sessionStorage.getItem('last_order_rej_reason')
+            const reason = cachedReason ?? '점주가 주문을 거부했습니다.'
             setStatus('rejected')
             track('order_rejected', { order_code: orderCode, reason })
             setRejectedReason(reason)
             sessionStorage.setItem('last_order_rejected', '1')
             sessionStorage.setItem('last_order_rej_reason', reason)
           }
+          // departed_at은 get_order_status(선택적)로 별도 보강 — 실패해도 무방
+          supabase.rpc('get_order_status', { p_order_code: orderCode })
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            .then(({ data: det }: { data: any }) => {
+              // eslint-disable-next-line @typescript-eslint/no-explicit-any
+              const d = Array.isArray(det) ? det[0] ?? null : null
+              if (d?.delivery_departed_at) setDepartedAt(d.delivery_departed_at)
+              if (row.status === '취소' && d?.note) {
+                setRejectedReason(d.note)
+                sessionStorage.setItem('last_order_rej_reason', d.note)
+              }
+            })
         })
 
       try {
@@ -170,6 +186,16 @@ function SuccessPageInner() {
             setRejectedReason(reason)
             sessionStorage.setItem('last_order_rejected', '1')
             sessionStorage.setItem('last_order_rej_reason', reason)
+          })
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          .on('broadcast', { event: 'ORDER_COMPLETED' }, ({ payload }: { payload: any }) => {
+            setStatus('accepted')
+            setPosCompleted(true)
+            if (payload?.departed_at) setDepartedAt(payload.departed_at)
+          })
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          .on('broadcast', { event: 'DELIVERY_DEPARTED' }, ({ payload }: { payload: any }) => {
+            if (payload?.departed_at) setDepartedAt(payload.departed_at)
           })
           .subscribe()
         channelRef.current = channel
@@ -304,19 +330,45 @@ function SuccessPageInner() {
     }
   }, [router, searchParams])
 
-  // ── pending 상태 폴링 폴백 (Realtime 미수신 대비, 3초마다) ────────────
+  // ── 상태 폴링 폴백 (Realtime 미수신 대비, 3초마다) ────────────────────
+  // sessionStorage를 직접 읽어 TEMP→실제 코드 전환도 여기서 처리
+  // → orderCode React state에 의존하지 않으므로 타이밍 경쟁 없음
   useEffect(() => {
-    if (status !== 'pending' || !orderCode || orderCode.startsWith('TEMP-') || orderCode.startsWith('MOCK-')) return
+    if (status === 'rejected') return
+    if (status === 'accepted' && posCompleted) return
 
     async function poll() {
+      // sessionStorage에서 항상 최신 코드 읽기
+      const code = sessionStorage.getItem('last_order_code')
+      if (!code || code.startsWith('TEMP-') || code.startsWith('MOCK-')) return
+
+      // React state가 아직 TEMP면 실제 코드로 업데이트 + Realtime 설정
+      if (!orderCode || orderCode.startsWith('TEMP-')) {
+        const num = sessionStorage.getItem('last_order_number')
+        setOrderCode(code)
+        if (num) setOrderNumber(num)
+        if (!channelRef.current) {
+          setupRealtimeRef.current?.(code)
+        }
+      }
+
       const supabase = getSupabaseClient()
-      const { data } = await supabase
-        .from('orders')
-        .select('status, note')
-        .eq('order_code', orderCode)
-        .maybeSingle()
-      if (!data) return
-      if (data.status === '조리중' || data.status === '완료') {
+      // get_order_statuses: anon GRANT 확정, 상태 감지 기준
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const { data: statuses, error: statusErr } = await supabase.rpc('get_order_statuses', { p_order_codes: [code] }) as { data: any; error: any }
+      if (statusErr) { console.error('[poll] get_order_statuses error:', statusErr); return }
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const statusRow = Array.isArray(statuses) ? statuses.find((r: any) => r.order_code === code) ?? null : null
+      if (!statusRow) return
+
+      // get_order_status: departed_at / note 보강용 (선택적, 실패해도 무방)
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const { data: details } = await supabase.rpc('get_order_status', { p_order_code: code }) as { data: any }
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const detail = Array.isArray(details) ? details[0] ?? null : null
+
+      if (detail?.delivery_departed_at) setDepartedAt(detail.delivery_departed_at)
+      if (statusRow.status === '완료') {
         setStatus('accepted')
         setAcceptedAt(prev => {
           if (prev) return prev
@@ -324,9 +376,17 @@ function SuccessPageInner() {
           sessionStorage.setItem('last_order_accepted_at', String(now))
           return now
         })
-        if (data.status === '완료') setPosCompleted(true)
-      } else if (data.status === '취소') {
-        const reason = data.note ?? '점주가 주문을 거부했습니다.'
+        setPosCompleted(true)
+      } else if (statusRow.status === '조리중') {
+        setStatus('accepted')
+        setAcceptedAt(prev => {
+          if (prev) return prev
+          const now = Date.now()
+          sessionStorage.setItem('last_order_accepted_at', String(now))
+          return now
+        })
+      } else if (statusRow.status === '취소') {
+        const reason = detail?.note ?? sessionStorage.getItem('last_order_rej_reason') ?? '점주가 주문을 거부했습니다.'
         setStatus('rejected')
         setRejectedReason(reason)
         sessionStorage.setItem('last_order_rejected', '1')
@@ -334,9 +394,21 @@ function SuccessPageInner() {
       }
     }
 
-    const id = setInterval(poll, 3000)
-    return () => clearInterval(id)
-  }, [status, orderCode])
+    // 즉시 한 번 실행 후 2초 간격으로 반복
+    poll()
+    const id = setInterval(poll, 2000)
+
+    // 모바일 브라우저에서 화면이 꺼졌다가 켜질 때 즉시 폴링
+    // (iOS Safari는 백그라운드에서 setInterval을 중단하므로 필수)
+    const onVisible = () => { if (document.visibilityState === 'visible') poll() }
+    document.addEventListener('visibilitychange', onVisible)
+
+    return () => {
+      clearInterval(id)
+      document.removeEventListener('visibilitychange', onVisible)
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [status, posCompleted])
 
   // ── 타이머 카운트다운 ──────────────────────────────────────────────────
   useEffect(() => {
@@ -428,51 +500,70 @@ function SuccessPageInner() {
       <div className="flex-1 overflow-y-auto px-4 pt-8 pb-6 space-y-4">
 
         {/* 타이틀 */}
-        <div className="flex items-center justify-between">
-          <div>
-            <p className="text-xl font-bold text-[#1E1E1E]">
-              {isReady
-                ? (isDelivery ? '배달기사가 곧 도착해요!' : '메뉴가 준비됐어요!')
-                : '주문이 접수됐어요!'}
+        {isReady ? (
+          /* ── 준비 완료: 그라디에이션 배너 ── */
+          <div
+            className="rounded-2xl py-8 px-5 flex flex-col items-center gap-2 text-center"
+            style={{ background: 'linear-gradient(135deg, #02a84e 0%, #017333 60%, #015a28 100%)' }}
+          >
+            <span className="text-[64px] leading-none mt-1">🎉</span>
+            <p className="text-[20px] font-bold text-white mt-1">
+              {isDelivery
+                ? `${orderOrderer ? `${orderOrderer}님의 ` : ''}배달이 출발했어요`
+                : `${orderOrderer ? `${orderOrderer}님의 ` : ''}메뉴가 준비됐어요!`}
             </p>
+            {isDelivery && departedAt && (
+              <div className="mt-1 px-4 py-1.5 rounded-full" style={{ backgroundColor: 'rgba(255,255,255,0.18)' }}>
+                <span className="text-[15px] font-bold text-white">
+                  🛵 {new Date(departedAt).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', hour12: false })} 출발
+                </span>
+              </div>
+            )}
             {(orderNumber ?? orderCode) && (
-              <span className="inline-block border border-[#b2dfc3] bg-[#E6F4EC] rounded-xl px-3 py-1 font-mono font-bold text-[#017333] text-[36px] tracking-widest leading-none mt-2">
+              <span className="font-mono font-extrabold text-white text-[44px] tracking-widest leading-none">
                 #{orderNumber ?? orderCode}
               </span>
             )}
-            {isReady && !isDelivery && (
-              <p className="text-sm text-[#017333] font-semibold mt-0.5">매장에서 받아가세요</p>
+            {!isDelivery && (
+              <p className="text-[13px] text-white/75 font-semibold">매장에서 받아가세요</p>
             )}
           </div>
-          {isReady ? (
-            <span className="text-[36px] leading-none flex-shrink-0">
-              {isDelivery ? '🛵' : '🎉'}
-            </span>
-          ) : (
-            <div className="w-9 h-9 rounded-full bg-[#017333] flex items-center justify-center flex-shrink-0">
+        ) : (
+          /* ── 접수 완료: 기존 레이아웃 ── */
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-xl font-bold text-[#1E1E1E]">주문이 접수됐어요!</p>
+              {(orderNumber ?? orderCode) && (
+                <span className="inline-block border border-[#b2dfc3] bg-[#E6F4EC] rounded-xl px-3 py-1 font-mono font-bold text-[#017333] text-[36px] tracking-widest leading-none mt-2">
+                  #{orderNumber ?? orderCode}
+                </span>
+              )}
+            </div>
+            <div className="w-9 h-9 rounded-full flex items-center justify-center flex-shrink-0" style={{ background: 'linear-gradient(135deg, #02a84e 0%, #017333 60%, #015a28 100%)' }}>
               <span className="text-white text-lg font-bold leading-none">✓</span>
             </div>
-          )}
-        </div>
+          </div>
+        )}
 
         {/* 타이머 (준비 전에만) */}
         {hasTimer && !isReady && (
-          <div className="bg-[#F5F5F5] rounded-2xl px-5 py-4">
-            <p className="text-[11px] font-semibold text-[#727272] mb-1">예상 대기시간</p>
-            <p className="text-[24px] font-extrabold text-[#1E1E1E] leading-none mb-3 tabular-nums">
+          <div className="rounded-2xl px-5 py-4" style={{ background: 'linear-gradient(135deg, #02a84e 0%, #017333 60%, #015a28 100%)' }}>
+            <p className="text-[11px] font-semibold text-white/70 mb-1">{orderMethod === '배달' ? '출발까지 예상 대기시간' : '예상 대기시간'}</p>
+            <p className="text-[24px] font-extrabold text-white leading-none mb-3 tabular-nums">
               {formatTime(secondsLeft!)}
             </p>
-            <div className="h-2 bg-[#D7D7D7] rounded-full overflow-hidden">
+            <div className="h-2 bg-white/25 rounded-full overflow-hidden">
               <div
-                className="h-full bg-[#017333] rounded-full transition-all duration-1000 ease-linear"
+                className="h-full bg-white rounded-full transition-all duration-1000 ease-linear"
                 style={{ width: `${progress * 100}%` }}
               />
             </div>
-            <p className="text-[11px] text-[#727272] mt-2 text-center">
+            <p className="text-[11px] text-white/60 mt-2 text-center">
               준비가 일찍 끝날 수도 있어요. 새로고침해서 확인해보세요 🔄
             </p>
           </div>
         )}
+
 
         {/* 주문 정보 */}
         <div className="bg-[#FAFAFA] rounded-xl px-4 py-4 space-y-2 text-sm">
@@ -534,15 +625,6 @@ function SuccessPageInner() {
           </div>
         )}
 
-        {/* 취소 불가 안내 */}
-        <div className="flex items-start gap-2 px-4 py-3 bg-[#FFF8F0] rounded-xl border border-[#FFE0B2]">
-          <span className="text-[#E65100] text-sm mt-0.5">ℹ️</span>
-          <p className="text-[13px] text-[#E65100] leading-relaxed">
-            주문 접수 후에는 취소 및 환불이 어려워요.<br />
-            문의는 매장으로 직접 연락해 주세요.
-          </p>
-        </div>
-
         {/* 주문 메뉴 목록 */}
         {savedItems.length > 0 && (
           <div>
@@ -591,6 +673,15 @@ function SuccessPageInner() {
             </div>
           </div>
         )}
+
+        {/* 취소 불가 안내 */}
+        <div className="flex items-start gap-2 px-4 py-3 bg-white rounded-xl border border-[#D7D7D7]">
+          <span className="text-[#1E1E1E] text-sm mt-0.5">ℹ️</span>
+          <p className="text-[13px] text-[#727272] leading-relaxed">
+            주문 접수 후에는 취소 및 환불이 어려워요.<br />
+            문의는 매장으로 직접 연락해 주세요.
+          </p>
+        </div>
       </div>
 
       {/* 네이버 리뷰 — 하단 스티키 플로팅 */}

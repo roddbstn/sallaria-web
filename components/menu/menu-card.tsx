@@ -39,11 +39,13 @@ export default function MenuCard({ menu, onClick }: MenuCardProps) {
 
       {/* 텍스트 영역 */}
       <div className="flex-1 min-w-0 flex flex-col justify-center gap-[4px]">
-        {/* 인기 태그 */}
-        {menu.popular && !isSoldOut && (
-          <span className="inline-block w-fit text-[11px] font-bold text-[#017333] bg-[#E6F4EC] px-[8px] py-[2px] rounded-full">
-            인기
-          </span>
+        {/* 태그 뱃지 */}
+        {!isSoldOut && (menu.popular || menu.recommended || menu.isNew) && (
+          <div className="flex gap-1 flex-wrap">
+            {menu.popular     && <span style={{ backgroundColor: '#F97316', color: 'white' }} className="inline-block w-fit text-[13px] font-bold px-[8px] py-[2px] rounded-full">인기</span>}
+            {menu.recommended && <span style={{ backgroundColor: '#16a84c', color: 'white' }} className="inline-block w-fit text-[13px] font-bold px-[8px] py-[2px] rounded-full">추천</span>}
+            {menu.isNew       && <span style={{ backgroundColor: '#1D6FE8', color: 'white' }} className="inline-block w-fit text-[13px] font-bold px-[8px] py-[2px] rounded-full">신메뉴</span>}
+          </div>
         )}
         <p className="text-[16px] font-semibold text-[#1E1E1E] leading-snug">{menu.name}</p>
         <p className="text-[12px] text-[#727272] leading-snug line-clamp-2">{menu.desc}</p>

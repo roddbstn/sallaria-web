@@ -22,16 +22,23 @@ export default function OptionGroup({
   const showFinalPrice = group.group === '사이즈' && basePrice !== undefined
   // 가격 그룹: 이름 자체를 현재가(basePrice + extra)로 대체
   const isGaGyeok = (group.group === '가격' || group.group === '가격(필수)') && basePrice !== undefined
+  // 그룹 전체 품절
+  const groupSoldOut = group.isSoldOut ?? false
 
   return (
     <div className={[
       'border-t border-[#F0F0F0]',
       isMissing ? 'border-l-[3px] border-l-[#C92A2A]' : '',
+      groupSoldOut ? 'opacity-50' : '',
     ].join(' ')}>
       {/* 그룹 헤더 */}
       <div className="flex items-center gap-2 px-5 py-3">
         <span className="text-[14px] font-bold text-[#1E1E1E]">{group.group}</span>
-        {group.required ? (
+        {groupSoldOut ? (
+          <span className="text-[11px] font-semibold text-white bg-[#727272] px-[7px] py-[2px] rounded-full">
+            품절
+          </span>
+        ) : group.required ? (
           <span className="text-[11px] font-semibold text-[#C92A2A] bg-[#FFF0F0] px-[7px] py-[2px] rounded-full">
             필수
           </span>
@@ -70,7 +77,7 @@ export default function OptionGroup({
           return (
             <div
               key={item.id}
-              onClick={() => !isSoldOut && onToggle(groupIndex, item.id)}
+              onClick={() => !isSoldOut && !groupSoldOut && onToggle(groupIndex, item.id)}
               className={[
                 'w-full flex items-center justify-between px-5 py-[13px]',
                 isSoldOut ? 'opacity-40 cursor-not-allowed' : 'cursor-pointer',

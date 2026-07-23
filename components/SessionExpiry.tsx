@@ -18,6 +18,7 @@ export default function SessionExpiry() {
 
   useEffect(() => {
     if (EXEMPT_PATHS.some(p => pathname?.startsWith(p))) return
+    if (account?.isDemo) return  // 데모 세션은 만료 없음
     if (!loginAt) return
 
     function check() {

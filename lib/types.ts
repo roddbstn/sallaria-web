@@ -18,6 +18,7 @@ export interface Account {
   pin: string            // 4자리 PIN (mock only — real: server-side)
   storeId?: string       // 소속 스토어 ID
   storeName?: string     // 스토어명
+  isDemo?: boolean       // 데모 모드 — 실제 주문 RPC 호출 안 함
 }
 
 export interface MenuOptionItem {
@@ -32,6 +33,7 @@ export interface MenuOptionGroup {
   group: string          // 옵션그룹명
   required: boolean      // 필수여부
   multi: boolean         // 복수선택 여부
+  isSoldOut?: boolean    // 그룹 전체 품절
   items: MenuOptionItem[]
 }
 
@@ -44,6 +46,8 @@ export interface Menu {
   emoji: string          // 이모지 (사진 없을 때 대체)
   imageUrl?: string      // Supabase Storage 사진 URL
   popular?: boolean
+  recommended?: boolean
+  isNew?: boolean
   isSoldOut?: boolean
   isHidden?: boolean
   options: MenuOptionGroup[]
