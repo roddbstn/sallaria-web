@@ -23,7 +23,7 @@ export default function MenuCard({ menu, onClick }: MenuCardProps) {
       ].join(' ')}
     >
       {/* 이미지 썸네일 */}
-      <div className="relative flex-shrink-0">
+      <div className="relative flex-shrink-0 w-[88px] h-[88px]">
         <div className="w-[88px] h-[88px] bg-[#F5F5F5] rounded-xl overflow-hidden flex items-center justify-center text-[38px]">
           {menu.imageUrl
             ? <img src={menu.imageUrl} alt={menu.name} className="w-full h-full object-cover" />
@@ -33,6 +33,16 @@ export default function MenuCard({ menu, onClick }: MenuCardProps) {
         {isSoldOut && (
           <div className="absolute inset-0 bg-black/40 rounded-xl flex items-center justify-center">
             <span className="text-white text-[11px] font-bold">품절</span>
+          </div>
+        )}
+        {!isSoldOut && (
+          <div className="absolute bottom-[6px] right-[6px] w-[26px] h-[26px] bg-white rounded-full flex items-center justify-center pointer-events-none"
+            style={{ boxShadow: '0 1px 3px rgba(0,0,0,0.08)' }}
+          >
+            <svg width="11" height="11" viewBox="0 0 11 11" fill="none">
+              <line x1="5.5" y1="2" x2="5.5" y2="9" stroke="#1E1E1E" strokeWidth="1.8" strokeLinecap="round"/>
+              <line x1="2" y1="5.5" x2="9" y2="5.5" stroke="#1E1E1E" strokeWidth="1.8" strokeLinecap="round"/>
+            </svg>
           </div>
         )}
       </div>
