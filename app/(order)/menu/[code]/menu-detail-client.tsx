@@ -160,9 +160,9 @@ export default function MenuDetailClient({ code }: { code: string }) {
         <div className="flex items-center px-4 py-4 relative">
           <button
             onClick={() => router.back()}
-            className="text-xl text-[#1E1E1E] z-10"
+            className="w-9 h-9 flex items-center justify-center z-10"
           >
-            ←
+            <svg width="9" height="15" viewBox="0 0 9 15" fill="none"><path d="M8 1L1 7.5L8 14" stroke="#1E1E1E" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></svg>
           </button>
           <span className="absolute inset-0 flex items-center justify-center text-[15px] font-bold text-[#1E1E1E] pointer-events-none">
             메뉴 선택

@@ -355,9 +355,9 @@ function HomePageInner() {
       <div className="flex flex-col min-h-screen bg-white px-6 pt-16">
         <button
           onClick={() => { setForgotPin(false); setForgotResult(null); setForgotName(''); setForgotPhone('') }}
-          className="text-[13px] text-[#727272] mb-10 self-start"
+          className="w-9 h-9 flex items-center justify-center mb-10 self-start"
         >
-          ← 돌아가기
+          <svg width="9" height="15" viewBox="0 0 9 15" fill="none"><path d="M8 1L1 7.5L8 14" stroke="#1E1E1E" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></svg>
         </button>
         <div className="flex flex-col gap-4">
           <div className="w-16 h-16 rounded-full flex items-center justify-center mb-2"
@@ -389,9 +389,9 @@ function HomePageInner() {
       <div className="flex flex-col min-h-screen bg-white px-6 pt-16">
         <button
           onClick={() => { setForgotPin(false); setForgotError('') }}
-          className="text-[13px] text-[#727272] mb-8 self-start"
+          className="w-9 h-9 flex items-center justify-center mb-8 self-start"
         >
-          ← 돌아가기
+          <svg width="9" height="15" viewBox="0 0 9 15" fill="none"><path d="M8 1L1 7.5L8 14" stroke="#1E1E1E" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></svg>
         </button>
         <h1 className="text-[22px] font-bold text-[#1E1E1E] leading-snug mb-8">
           선결제 고객 확인을 위해<br />인증을 진행해 주세요
