@@ -157,10 +157,10 @@ export default function MenuDetailClient({ code }: { code: string }) {
     <div className="flex flex-col h-full bg-white">
       {/* ── 헤더 ── */}
       <div className="fixed top-0 left-0 right-0 z-10 bg-white border-b border-[#F0F0F0]" style={{ maxWidth: '430px', margin: '0 auto', paddingTop: 'env(safe-area-inset-top)' }}>
-        <div className="flex items-center px-4 py-4 relative">
+        <div className="flex items-center px-5 py-4 relative">
           <button
             onClick={() => router.back()}
-            className="w-9 h-9 flex items-center justify-center z-10"
+            className="-ml-3 p-3 z-10"
           >
             <svg width="9" height="15" viewBox="0 0 9 15" fill="none"><path d="M8 1L1 7.5L8 14" stroke="#1E1E1E" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></svg>
           </button>

@@ -355,7 +355,7 @@ function HomePageInner() {
       <div className="flex flex-col min-h-screen bg-white px-6 pt-16">
         <button
           onClick={() => { setForgotPin(false); setForgotResult(null); setForgotName(''); setForgotPhone('') }}
-          className="w-9 h-9 flex items-center justify-center mb-10 self-start"
+          className="-ml-3 p-3 mb-10 self-start"
         >
           <svg width="9" height="15" viewBox="0 0 9 15" fill="none"><path d="M8 1L1 7.5L8 14" stroke="#1E1E1E" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></svg>
         </button>
@@ -389,7 +389,7 @@ function HomePageInner() {
       <div className="flex flex-col min-h-screen bg-white px-6 pt-16">
         <button
           onClick={() => { setForgotPin(false); setForgotError('') }}
-          className="w-9 h-9 flex items-center justify-center mb-8 self-start"
+          className="-ml-3 p-3 mb-8 self-start"
         >
           <svg width="9" height="15" viewBox="0 0 9 15" fill="none"><path d="M8 1L1 7.5L8 14" stroke="#1E1E1E" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></svg>
         </button>

@@ -8,10 +8,10 @@ export default function PrivacyPage() {
   return (
     <div className="min-h-screen bg-white max-w-[430px] mx-auto flex flex-col">
       {/* 헤더 */}
-      <header className="flex items-center h-14 px-4 border-b border-[#D7D7D7] flex-shrink-0 sticky top-0 bg-white z-10">
+      <header className="flex items-center h-14 px-5 border-b border-[#D7D7D7] flex-shrink-0 sticky top-0 bg-white z-10">
         <button
           onClick={() => router.back()}
-          className="w-9 h-9 flex items-center justify-center rounded-full hover:bg-[#F5F5F5] transition-colors"
+          className="-ml-3 p-3 rounded-full hover:bg-[#F5F5F5] transition-colors"
         >
           <svg width="9" height="15" viewBox="0 0 9 15" fill="none"><path d="M8 1L1 7.5L8 14" stroke="#1E1E1E" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></svg>
         </button>
