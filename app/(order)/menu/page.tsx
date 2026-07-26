@@ -37,6 +37,8 @@ function MenuPageInner() {
   const [activeCategory, setActiveCategory] = useState('')
   const [showDropdown, setShowDropdown] = useState(false)
   const [showScrollTop, setShowScrollTop] = useState(false)
+  const [catBarShadow,  setCatBarShadow]  = useState(false)
+  const [searchBarShadow, setSearchBarShadow] = useState(false)
   const sectionRefs = useRef<Record<string, HTMLDivElement | null>>({})
   const tabButtonRefs = useRef<Record<string, HTMLButtonElement | null>>({})
   const tabsRef = useRef<HTMLDivElement>(null)
@@ -171,56 +173,47 @@ function MenuPageInner() {
     load()
   }, [account, retryCount])
 
-  // 스크롤 감지 — window 대신 내부 컨테이너 사용
+  // categories를 ref로 유지 — spy 클로저에서 항상 최신 값을 읽기 위해
+  const categoriesRef = useRef<Category[]>([])
+  useEffect(() => { categoriesRef.current = categories }, [categories])
+
+  // 스크롤 감지 + 스파이 — loading 끝난 뒤 scrollRef가 DOM에 붙으면 한 번 실행
   const firedDepths = useRef(new Set<number>())
   useEffect(() => {
-    const el = scrollRef.current
-    if (!el) return
-    const onScroll = () => {
-      setShowScrollTop(el.scrollTop > 300)
+    if (loading) return
+    const container = scrollRef.current
+    if (!container) return
+    const TABS_H = 56
+    const el = container  // TypeScript closure narrowing용
+
+    function onScroll() {
+      const top = el.scrollTop
+      setShowScrollTop(top > 300)
+      setCatBarShadow(top > 10)
       // 스크롤 깊이 트래킹 (25/50/75/90%)
-      const pct = Math.floor((el.scrollTop / (el.scrollHeight - el.clientHeight)) * 100)
+      const pct = Math.floor((top / (el.scrollHeight - el.clientHeight)) * 100)
       for (const milestone of [25, 50, 75, 90]) {
         if (pct >= milestone && !firedDepths.current.has(milestone)) {
           firedDepths.current.add(milestone)
           track('scroll_depth', { depth: milestone, page: 'menu' })
         }
       }
-    }
-    el.addEventListener('scroll', onScroll, { passive: true })
-    return () => el.removeEventListener('scroll', onScroll)
-  }, [])
-
-  // categories를 ref로 유지 — spy 클로저에서 항상 최신 값을 읽기 위해
-  const categoriesRef = useRef<Category[]>([])
-  useEffect(() => { categoriesRef.current = categories }, [categories])
-
-  // 스크롤 스파이 — loading이 끝나면 한 번만 리스너 부착
-  // loading=true 시 scrollRef div 자체가 없으므로 loading 의존으로 제어
-  useEffect(() => {
-    if (loading) return
-    const container = scrollRef.current
-    if (!container) return
-    const TABS_H = 56
-
-    function spy() {
+      // 카테고리 스파이
       if (isScrollingToRef.current) return
       const cats = categoriesRef.current
       if (cats.length === 0) return
-      const baseTop = container!.getBoundingClientRect().top + TABS_H
+      const baseTop = el.getBoundingClientRect().top + TABS_H
       let current = cats[0].id
       for (const cat of cats) {
         const el = sectionRefs.current[cat.id]
         if (!el) continue
-        if (el.getBoundingClientRect().top <= baseTop) {
-          current = cat.id
-        }
+        if (el.getBoundingClientRect().top <= baseTop) current = cat.id
       }
       setActiveCategory(current)
     }
 
-    container.addEventListener('scroll', spy, { passive: true })
-    return () => container.removeEventListener('scroll', spy)
+    el.addEventListener('scroll', onScroll, { passive: true })
+    return () => el.removeEventListener('scroll', onScroll)
   }, [loading])
 
   // 활성 탭 자동 수평 스크롤 — 탭이 탭바 밖으로 나가면 따라옴
@@ -269,9 +262,11 @@ function MenuPageInner() {
         if (el.getBoundingClientRect().top <= tabsBottom) current = cat.id
       }
       setSearchActiveCategory(current)
+      setSearchBarShadow((container?.scrollTop ?? 0) > 10)
     }
+    setSearchBarShadow(false)
     container.addEventListener('scroll', spy, { passive: true })
-    return () => container.removeEventListener('scroll', spy)
+    return () => { container.removeEventListener('scroll', spy); setSearchBarShadow(false) }
   }, [searchOpen, searchCategories])
 
   // 검색 모달 활성 탭 자동 수평 스크롤
@@ -365,10 +360,10 @@ function MenuPageInner() {
   }
 
   return (
-    // fixed inset-0: 뷰포트 전체를 점유 → 내부 overflow-y-auto 높이가 확정되어 sticky 동작
+    // fixed + centered: 430px 안에서 뷰포트 전체 높이를 점유 → sticky/overflow 동작 유지
     <div
-      className="fixed inset-0 flex flex-col bg-white"
-      style={{ paddingTop: 'env(safe-area-inset-top)' }}
+      className="fixed top-0 bottom-0 w-full max-w-[430px] flex flex-col bg-white"
+      style={{ left: '50%', transform: 'translateX(-50%)', paddingTop: 'env(safe-area-inset-top)' }}
     >
 
       {/* ── 내부 스크롤 컨테이너 ── */}
@@ -396,7 +391,7 @@ function MenuPageInner() {
         </div>
 
         {/* 카테고리 탭 (sticky — 내부 컨테이너 기준으로 동작) */}
-        <div className="sticky top-0 z-10 bg-white">
+        <div className="sticky top-0 z-10 bg-white" style={{ position: 'sticky' }}>
           <div className="flex items-center">
             <div
               ref={tabsRef}
@@ -422,7 +417,8 @@ function MenuPageInner() {
             </div>
             <button
               onClick={() => { if (!showDropdown) track('category_dropdown_open'); setShowDropdown(v => !v) }}
-              className="flex-shrink-0 w-10 h-10 mr-4 bg-[#FAFAFA] border border-[#D7D7D7] rounded-full flex items-center justify-center text-[#727272]"
+              className="flex-shrink-0 w-10 h-10 mr-4 bg-white border border-[#E0E0E0] rounded-full flex items-center justify-center text-[#727272]"
+              style={{ boxShadow: '0 1px 3px rgba(0,0,0,0.06)' }}
               aria-label="전체 카테고리"
             >
               <svg
@@ -434,7 +430,16 @@ function MenuPageInner() {
               </svg>
             </button>
           </div>
-
+          {/* 스크롤 시 아랫변 gradient 그림자 — overflow 컨테이너 안에서도 흰 콘텐츠 위에 보임 */}
+          <div
+            style={{
+              position: 'absolute', bottom: -6, left: 0, right: 0, height: 6,
+              background: 'linear-gradient(to bottom, rgba(0,0,0,0.05), transparent)',
+              opacity: catBarShadow ? 1 : 0,
+              transition: 'opacity 0.2s',
+              pointerEvents: 'none',
+            }}
+          />
         </div>
 
         {/* 메뉴 목록 */}
@@ -484,11 +489,11 @@ function MenuPageInner() {
       {/* 검색 플로팅 버튼 */}
       <button
         onClick={() => { setSearchQuery(''); setSearchOpen(true) }}
-        className="fixed right-5 z-20 w-12 h-12 bg-[#1E1E1E] text-white rounded-full shadow-lg flex items-center justify-center"
+        className="fixed right-5 z-20 w-10 h-10 bg-[#1E1E1E] text-white rounded-full shadow-lg flex items-center justify-center"
         style={{ bottom: qty > 0 ? '100px' : '20px' }}
         aria-label="메뉴 검색"
       >
-        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
           <circle cx="11" cy="11" r="8" /><line x1="21" y1="21" x2="16.65" y2="16.65" />
         </svg>
       </button>
@@ -557,8 +562,11 @@ function MenuPageInner() {
             }}
             onClick={e => e.stopPropagation()}
           >
+            {/* 헤더 + 검색 입력 (스크롤 시 아랫변 그림자) */}
+            <div className="flex-shrink-0 relative">
+              <div style={{ position: 'absolute', bottom: -6, left: 0, right: 0, height: 6, background: 'linear-gradient(to bottom, rgba(0,0,0,0.05), transparent)', opacity: searchBarShadow ? 1 : 0, transition: 'opacity 0.2s', pointerEvents: 'none', zIndex: 1 }} />
             {/* 헤더 */}
-            <div className="px-5 pt-5 pb-3 flex items-center justify-between flex-shrink-0">
+            <div className="px-5 pt-5 pb-3 flex items-center justify-between">
               <h2 className="text-[18px] font-extrabold text-[#1E1E1E]">메뉴 검색</h2>
               <button
                 onClick={() => setSearchOpen(false)}
@@ -572,7 +580,7 @@ function MenuPageInner() {
             </div>
 
             {/* 검색 입력 */}
-            <div className="px-5 pb-3 flex-shrink-0">
+            <div className="px-5 pb-3">
               <div className="flex items-center gap-2 bg-[#F5F5F5] rounded-xl px-4 py-3">
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#727272" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
                   <circle cx="11" cy="11" r="8" /><line x1="21" y1="21" x2="16.65" y2="16.65" />
@@ -590,12 +598,14 @@ function MenuPageInner() {
               </div>
             </div>
 
+            </div>{/* end 헤더+검색 wrapper */}
+
             {/* 스크롤 영역 (카테고리 탭 + 메뉴 목록) */}
             <div ref={searchScrollRef} className="flex-1 overflow-y-auto bg-white">
 
               {/* 카테고리 탭 sticky */}
               {searchCategories.length > 0 && (
-                <div className="sticky top-0 z-10 bg-white">
+                <div className="sticky top-0 z-10 bg-white" style={{ position: 'sticky' }}>
                   <div className="flex items-center">
                     <div
                       ref={searchTabsRef}
@@ -620,7 +630,8 @@ function MenuPageInner() {
                     </div>
                     <button
                       onClick={() => setSearchShowDropdown(v => !v)}
-                      className="flex-shrink-0 w-10 h-10 mr-4 bg-[#FAFAFA] border border-[#D7D7D7] rounded-full flex items-center justify-center text-[#727272]"
+                      className="flex-shrink-0 w-10 h-10 mr-4 bg-white border border-[#E0E0E0] rounded-full flex items-center justify-center text-[#727272]"
+                      style={{ boxShadow: '0 1px 3px rgba(0,0,0,0.06)' }}
                       aria-label="전체 카테고리"
                     >
                       <svg
@@ -719,7 +730,7 @@ function MenuPageInner() {
 
       {/* 메뉴 상세 오버레이 — ?item=code 파라미터가 있을 때 표시 */}
       {selectedItemCode && (
-        <div className="fixed inset-0 z-50 bg-white" style={{ paddingTop: 'env(safe-area-inset-top)' }}>
+        <div className="fixed top-0 bottom-0 w-full max-w-[430px] z-50 bg-white" style={{ left: '50%', transform: 'translateX(-50%)', paddingTop: 'env(safe-area-inset-top)' }}>
           <Suspense>
             <MenuDetailClient code={selectedItemCode} />
           </Suspense>
