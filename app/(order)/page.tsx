@@ -261,7 +261,7 @@ function HomePageInner() {
         } else {
           const remaining = PIN_LOCK_LIMIT - newAttempts
           setPinError(`비밀번호가 틀렸습니다. (${newAttempts}회 오류, ${remaining}회 남음)`)
-          track('pin_fail', { attempts: newAttempts, store_id: storeId ?? '' })
+          track('login_fail', { attempts: newAttempts, store_id: storeId ?? '' })
         }
         return
       }
@@ -305,7 +305,6 @@ function HomePageInner() {
     setPinError('')
 
     if (next.length === 4) {
-      track('pin_submit', { store_id: storeId ?? '' })
       setTimeout(() => verifyPin(next), 120)
     }
   }, [pin, isLocked, verifying, verifyPin])
