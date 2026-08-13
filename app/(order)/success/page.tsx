@@ -6,6 +6,7 @@ import { useSessionStore } from '@/lib/store/session'
 import { getSupabaseClient } from '@/lib/supabase/client'
 import { formatWon } from '@/lib/utils'
 import { track } from '@/lib/firebase'
+import { ampTrack } from '@/lib/amplitude'
 import type { CartItem } from '@/lib/types'
 
 type OrderResultStatus = 'pending' | 'accepted' | 'rejected'
@@ -111,6 +112,7 @@ function SuccessPageInner() {
           if (row.status === '조리중' || row.status === '완료') {
             setStatus('accepted')
             track('order_accepted', { order_code: orderCode })
+            ampTrack('order_accepted', { order_code: orderCode })
             setAcceptedAt(prev => {
               if (prev) return prev
               const now = Date.now()
@@ -123,6 +125,7 @@ function SuccessPageInner() {
             const reason = cachedReason ?? '점주가 주문을 거부했습니다.'
             setStatus('rejected')
             track('order_rejected', { order_code: orderCode, reason })
+            ampTrack('order_rejected', { order_code: orderCode, reason })
             setRejectedReason(reason)
             sessionStorage.setItem('last_order_rejected', '1')
             sessionStorage.setItem('last_order_rej_reason', reason)
@@ -694,10 +697,10 @@ function SuccessPageInner() {
             소중한 리뷰 작성이 큰 힘이 돼요!
           </p>
           <a
-            href="https://naver.me/sallaria"
+            href="https://naver.me/5b013Rvl"
             target="_blank"
             rel="noopener noreferrer"
-            onClick={() => track('naver_review_click')}
+            onClick={() => { track('naver_review_click'); ampTrack('naver_review_click') }}
             className="block w-full py-4 rounded-xl bg-[#03C75A] text-white text-[16px] font-extrabold text-center transition-transform duration-100 active:scale-95 active:brightness-90"
           >
             네이버 리뷰 남기기
