@@ -7,6 +7,7 @@ import { useCartStore } from '@/lib/store/cart'
 import { getSupabaseClient } from '@/lib/supabase/client'
 import { formatWon, calcSubtotal } from '@/lib/utils'
 import { track } from '@/lib/firebase'
+import { ampTrack } from '@/lib/amplitude'
 import type { Menu, SelectedOption } from '@/lib/types'
 import OptionGroup from '@/components/menu/option-group'
 import { mapDbMenu } from '@/lib/mappers'
@@ -26,6 +27,7 @@ export default function MenuDetailClient({ code }: { code: string }) {
   const [selectedMap, setSelectedMap] = useState<Record<number, string[]>>({})
   const [qty, setQty] = useState(1)
   const [missingGroups, setMissingGroups] = useState<number[]>([])
+  const [imgZoom, setImgZoom] = useState(false)
 
   useEffect(() => {
     async function fetchMenu() {
@@ -148,6 +150,7 @@ export default function MenuDetailClient({ code }: { code: string }) {
     } else {
       addItem(menu.code, menu.name, menu.price, qty, selectedOptions, menu.imageUrl)
       track('add_to_cart', { item_name: menu.name, price: menu.price, quantity: qty, value: subtotal, currency: 'KRW' })
+      ampTrack('add_to_cart', { menu_name: menu.name, price: menu.price, quantity: qty })
       router.refresh()  // /menu 라우터 캐시 무효화 → 장바구니 바 즉시 반영
       router.back()
     }
@@ -175,12 +178,28 @@ export default function MenuDetailClient({ code }: { code: string }) {
         <div
           className="w-full bg-[#F5F5F5] overflow-hidden flex items-center justify-center"
           style={{ aspectRatio: '16/10' }}
+          onClick={() => menu.imageUrl && setImgZoom(true)}
         >
           {menu.imageUrl
-            ? <img src={menu.imageUrl} alt={menu.name} className="w-full h-full object-cover" />
+            ? <img src={menu.imageUrl} alt={menu.name} className={`w-full h-full object-cover ${menu.imageUrl ? 'cursor-zoom-in' : ''}`} />
             : <span style={{ fontSize: '72px' }}>{menu.emoji}</span>
           }
         </div>
+
+        {/* 이미지 확대 오버레이 */}
+        {imgZoom && menu.imageUrl && (
+          <div
+            className="fixed inset-0 z-50 flex items-center justify-center bg-black/80"
+            onClick={() => setImgZoom(false)}
+          >
+            <img
+              src={menu.imageUrl}
+              alt={menu.name}
+              className="max-w-[92vw] max-h-[80vh] rounded-xl object-contain"
+              onClick={e => e.stopPropagation()}
+            />
+          </div>
+        )}
 
         <div className="px-5 pt-5 pb-4">
           {(menu.popular || menu.recommended || menu.isNew) && (
@@ -199,7 +218,7 @@ export default function MenuDetailClient({ code }: { code: string }) {
           <span className="text-[16px] font-semibold text-[#1E1E1E]">{formatWon(menu.price)}</span>
           <div className="flex items-center gap-4">
             <button
-              onClick={() => { const next = Math.max(1, qty - 1); if (next !== qty) track('quantity_change', { menu_name: menu.name, direction: 'down', new_qty: next }); setQty(q => Math.max(1, q - 1)) }}
+              onClick={() => { const next = Math.max(1, qty - 1); if (next !== qty) { track('quantity_change', { menu_name: menu.name, direction: 'down', new_qty: next }); ampTrack('quantity_change', { menu_name: menu.name, direction: 'down', new_qty: next }) } setQty(q => Math.max(1, q - 1)) }}
               className="w-9 h-9 rounded-full border border-[#D7D7D7] flex items-center justify-center text-[18px] text-[#1E1E1E]"
               disabled={qty <= 1}
             >
@@ -207,7 +226,7 @@ export default function MenuDetailClient({ code }: { code: string }) {
             </button>
             <span className="text-[16px] font-bold w-6 text-center">{qty}</span>
             <button
-              onClick={() => { track('quantity_change', { menu_name: menu.name, direction: 'up', new_qty: qty + 1 }); setQty(q => q + 1) }}
+              onClick={() => { track('quantity_change', { menu_name: menu.name, direction: 'up', new_qty: qty + 1 }); ampTrack('quantity_change', { menu_name: menu.name, direction: 'up', new_qty: qty + 1 }); setQty(q => q + 1) }}
               className="w-9 h-9 rounded-full border border-[#D7D7D7] flex items-center justify-center text-[18px] text-[#1E1E1E]"
             >
               +
@@ -215,21 +234,26 @@ export default function MenuDetailClient({ code }: { code: string }) {
           </div>
         </div>
 
-        {menu.options.map((group, idx) => (
-          <div
-            key={idx}
-            data-missing={missingGroups.includes(idx) ? 'true' : 'false'}
-          >
-            <OptionGroup
-              group={group}
-              groupIndex={idx}
-              selectedIds={selectedMap[idx] ?? []}
-              onToggle={handleToggle}
-              isMissing={missingGroups.includes(idx)}
-              basePrice={menu.price}
-            />
+        {menu.options.length > 0 && (
+          <div className="flex flex-col border-t border-[#F0F0F0]">
+            {menu.options.map((group, idx) => (
+              <div
+                key={idx}
+                data-missing={missingGroups.includes(idx) ? 'true' : 'false'}
+                className="border-b border-[#F0F0F0]"
+              >
+                <OptionGroup
+                  group={group}
+                  groupIndex={idx}
+                  selectedIds={selectedMap[idx] ?? []}
+                  onToggle={handleToggle}
+                  isMissing={missingGroups.includes(idx)}
+                  basePrice={menu.price}
+                />
+              </div>
+            ))}
           </div>
-        ))}
+        )}
 
         <div className="h-4" />
       </div>
