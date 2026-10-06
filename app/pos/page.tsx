@@ -7,7 +7,8 @@ import { MENUS } from '@/lib/mock-data'
 // ── 타입 ──────────────────────────────────────────────────
 type OrderStatus = '주문완료' | '조리중' | '완료' | '취소'
 type OrderMethod  = '포장' | '내점' | '배달'
-type NavId        = 'dashboard' | 'orders' | 'accounts' | 'menus' | 'reports'
+type NavId        = 'dashboard' | 'orders' | 'accounts' | 'menus' | 'reports' | 'settings'
+type SoundType    = 'chime' | 'bell' | 'beep'
 
 interface PosOrder {
   id: string
@@ -97,6 +98,11 @@ export default function PosPage() {
   // 메뉴 이미지 (메뉴코드 → 로컬 ObjectURL)
   const [menuImages, setMenuImages] = useState<Record<string, string>>({})
 
+  // 설정 — 알림음
+  const [soundType, setSoundType]   = useState<SoundType>('chime')
+  const [soundVolume, setSoundVolume] = useState(70)
+  const [isPlaying, setIsPlaying]   = useState(false)
+
   // 이미지 수정 모달
   const [imgTarget, setImgTarget]   = useState<string | null>(null)   // 메뉴코드
   const [imgPreview, setImgPreview] = useState<string | null>(null)   // 미리보기 URL
@@ -173,6 +179,66 @@ export default function PosPage() {
     setImgFile(null)
   }
 
+  // ── 알림음 재생 ─────────────────────────────────────────
+  const playSound = (type: SoundType = soundType, vol: number = soundVolume) => {
+    if (isPlaying) return
+    setIsPlaying(true)
+
+    const ctx = new (window.AudioContext || (window as any).webkitAudioContext)()
+    const gain = ctx.createGain()
+    gain.connect(ctx.destination)
+
+    const v = vol / 100
+
+    if (type === 'chime') {
+      // 4음 차임 (C5 E5 G5 C6)
+      const notes = [523.25, 659.25, 783.99, 1046.5]
+      notes.forEach((freq, i) => {
+        const osc = ctx.createOscillator()
+        const g   = ctx.createGain()
+        osc.connect(g); g.connect(ctx.destination)
+        osc.type = 'sine'
+        osc.frequency.value = freq
+        const t = ctx.currentTime + i * 0.14
+        g.gain.setValueAtTime(0, t)
+        g.gain.linearRampToValueAtTime(v * 0.3, t + 0.02)
+        g.gain.exponentialRampToValueAtTime(0.001, t + 0.55)
+        osc.start(t); osc.stop(t + 0.55)
+      })
+      setTimeout(() => setIsPlaying(false), 900)
+
+    } else if (type === 'bell') {
+      // 딩동 2음
+      [660, 550].forEach((freq, i) => {
+        const osc = ctx.createOscillator()
+        const g   = ctx.createGain()
+        osc.connect(g); g.connect(ctx.destination)
+        osc.type = 'triangle'
+        osc.frequency.value = freq
+        const t = ctx.currentTime + i * 0.35
+        g.gain.setValueAtTime(v * 0.4, t)
+        g.gain.exponentialRampToValueAtTime(0.001, t + 0.6)
+        osc.start(t); osc.stop(t + 0.6)
+      })
+      setTimeout(() => setIsPlaying(false), 1000)
+
+    } else {
+      // 단순 비프 ×2
+      [0, 0.22].forEach(delay => {
+        const osc = ctx.createOscillator()
+        const g   = ctx.createGain()
+        osc.connect(g); g.connect(ctx.destination)
+        osc.type = 'square'
+        osc.frequency.value = 880
+        const t = ctx.currentTime + delay
+        g.gain.setValueAtTime(v * 0.15, t)
+        g.gain.exponentialRampToValueAtTime(0.001, t + 0.18)
+        osc.start(t); osc.stop(t + 0.18)
+      })
+      setTimeout(() => setIsPlaying(false), 500)
+    }
+  }
+
   // ── 네비게이션 아이템 ────────────────────────────────────
   const NAV_ITEMS: { id: NavId; label: string; badge?: number }[] = [
     { id: 'dashboard', label: '대시보드' },
@@ -180,6 +246,7 @@ export default function PosPage() {
     { id: 'accounts',  label: '거래처 관리' },
     { id: 'menus',     label: '메뉴 관리' },
     { id: 'reports',   label: '정산 리포트' },
+    { id: 'settings',  label: '설정' },
   ]
 
   // ── 렌더 ────────────────────────────────────────────────
@@ -187,7 +254,7 @@ export default function PosPage() {
     <div className="h-screen flex flex-col bg-[#F4F5F7] font-sans overflow-hidden">
 
       {/* 상단 상태 바 */}
-      <header className="flex-shrink-0 bg-[#1E1E1E] text-white px-6 py-3 flex items-center justify-between">
+      <header className="flex-shrink-0 bg-[#222222] text-white px-6 py-3 flex items-center justify-between">
         <span className="text-[15px] font-bold tracking-tight">프리POS</span>
         <div className="flex items-center gap-5 text-[13px]">
           <span className="flex items-center gap-1.5">
@@ -216,7 +283,7 @@ export default function PosPage() {
                       'inline-flex items-center gap-2 text-[14px] pb-[3px]',
                       isActive
                         ? 'font-bold text-[#017333] border-b-2 border-[#017333]'
-                        : 'font-medium text-[#727272] hover:text-[#1E1E1E]',
+                        : 'font-medium text-[#727272] hover:text-[#222222]',
                     ].join(' ')}>
                       {item.label}
                       {item.badge !== undefined && (
@@ -253,7 +320,7 @@ export default function PosPage() {
               </section>
 
               <section>
-                <h2 className="text-[14px] font-bold text-[#1E1E1E] mb-3 flex items-center gap-2">
+                <h2 className="text-[14px] font-bold text-[#222222] mb-3 flex items-center gap-2">
                   📋 처리 대기 주문
                   {activeOrders.length > 0 && (
                     <span className="text-[11px] font-bold text-white bg-[#E65100] px-2 py-0.5 rounded-full">
@@ -272,7 +339,7 @@ export default function PosPage() {
                         <div className="flex items-start justify-between gap-4">
                           <div className="flex-1 min-w-0">
                             <div className="flex items-center gap-2 mb-1.5 flex-wrap">
-                              <span className="text-[13px] font-bold text-[#1E1E1E]">
+                              <span className="text-[13px] font-bold text-[#222222]">
                                 {order.account} / {order.person}
                               </span>
                               <span className={`text-[11px] font-semibold px-2 py-0.5 rounded-full ${METHOD_COLOR[order.method]}`}>
@@ -286,7 +353,7 @@ export default function PosPage() {
                             <ul className="text-[13px] text-[#3D3D3D] space-y-0.5 mb-2">
                               {order.items.map((item, i) => <li key={i}>· {item}</li>)}
                             </ul>
-                            <span className="text-[13px] font-bold text-[#1E1E1E]">{formatWon(order.total)}</span>
+                            <span className="text-[13px] font-bold text-[#222222]">{formatWon(order.total)}</span>
                           </div>
                           <div className="flex flex-col gap-2 flex-shrink-0">
                             <button
@@ -307,12 +374,12 @@ export default function PosPage() {
 
               {LOW_BALANCE_ACCOUNTS.length > 0 && (
                 <section>
-                  <h2 className="text-[14px] font-bold text-[#1E1E1E] mb-3">⚠️ 잔액 경고 거래처</h2>
+                  <h2 className="text-[14px] font-bold text-[#222222] mb-3">⚠️ 잔액 경고 거래처</h2>
                   <div className="bg-white rounded-xl border border-[#E8E8E8] divide-y divide-[#F0F0F0]">
                     {LOW_BALANCE_ACCOUNTS.map(acc => (
                       <div key={acc.code} className="flex items-center justify-between px-5 py-4">
                         <div>
-                          <span className="text-[14px] font-semibold text-[#1E1E1E]">{acc.name}</span>
+                          <span className="text-[14px] font-semibold text-[#222222]">{acc.name}</span>
                           <span className="ml-3 text-[13px] font-bold text-[#C92A2A]">잔액 {formatWon(acc.balance)}</span>
                         </div>
                         <button className="px-4 py-2 border border-[#017333] text-[#017333] text-[13px] font-bold rounded-lg hover:bg-[#E6F4EC] active:scale-95 transition-all">
@@ -325,7 +392,7 @@ export default function PosPage() {
               )}
 
               <section>
-                <h2 className="text-[14px] font-bold text-[#1E1E1E] mb-3">오늘 주문 목록</h2>
+                <h2 className="text-[14px] font-bold text-[#222222] mb-3">오늘 주문 목록</h2>
                 <div className="bg-white rounded-xl border border-[#E8E8E8] overflow-hidden">
                   <table className="w-full text-[13px]">
                     <thead>
@@ -341,13 +408,13 @@ export default function PosPage() {
                       {orders.map(order => (
                         <tr key={order.id} className={order.status === '취소' ? 'opacity-40' : ''}>
                           <td className="px-4 py-3 text-[#727272]">{order.time}</td>
-                          <td className="px-4 py-3 font-medium text-[#1E1E1E]">{order.account} / {order.person}</td>
+                          <td className="px-4 py-3 font-medium text-[#222222]">{order.account} / {order.person}</td>
                           <td className="px-4 py-3">
                             <span className={`text-[11px] font-semibold px-2 py-0.5 rounded-full ${METHOD_COLOR[order.method]}`}>
                               {order.method}
                             </span>
                           </td>
-                          <td className="px-4 py-3 text-right font-semibold text-[#1E1E1E]">{formatWon(order.total)}</td>
+                          <td className="px-4 py-3 text-right font-semibold text-[#222222]">{formatWon(order.total)}</td>
                           <td className="px-4 py-3 text-center">
                             <span className={`text-[11px] font-semibold px-2 py-0.5 rounded-full ${STATUS_COLOR[order.status]}`}>
                               {STATUS_LABEL[order.status]}
@@ -367,7 +434,7 @@ export default function PosPage() {
             <section>
               <div className="flex items-center justify-between mb-4">
                 <div>
-                  <h2 className="text-[16px] font-bold text-[#1E1E1E]">메뉴 관리</h2>
+                  <h2 className="text-[16px] font-bold text-[#222222]">메뉴 관리</h2>
                   <p className="text-[12px] text-[#727272] mt-0.5">사진을 클릭하면 이미지를 교체할 수 있습니다.</p>
                 </div>
                 <span className="text-[12px] text-[#727272] bg-white border border-[#E8E8E8] px-3 py-1.5 rounded-lg">
@@ -423,13 +490,13 @@ export default function PosPage() {
                             </button>
                           </td>
                           <td className="px-4 py-3">
-                            <span className="font-semibold text-[#1E1E1E]">{menu.name}</span>
+                            <span className="font-semibold text-[#222222]">{menu.name}</span>
                             {menu.popular     && <span className="ml-1 text-[10px] font-bold text-white bg-[#F97316] px-1.5 py-0.5 rounded-full">인기</span>}
                             {menu.recommended && <span className="ml-1 text-[10px] font-bold text-white bg-[#16a84c] px-1.5 py-0.5 rounded-full">추천</span>}
                             {menu.isNew       && <span className="ml-1 text-[10px] font-bold text-white bg-[#1D6FE8] px-1.5 py-0.5 rounded-full">신메뉴</span>}
                           </td>
                           <td className="px-4 py-3 text-[#727272]">{CAT_NAME[menu.cat] ?? menu.cat}</td>
-                          <td className="px-4 py-3 text-right font-semibold text-[#1E1E1E]">{formatWon(menu.price)}</td>
+                          <td className="px-4 py-3 text-right font-semibold text-[#222222]">{formatWon(menu.price)}</td>
                           <td className="px-4 py-3 text-center">
                             <span className={`text-[11px] font-semibold px-2 py-0.5 rounded-full ${
                               menu.isSoldOut
@@ -448,8 +515,102 @@ export default function PosPage() {
             </section>
           )}
 
+          {/* ─ 설정 ─ */}
+          {activeNav === 'settings' && (
+            <section className="max-w-[560px]">
+              <h2 className="text-[16px] font-bold text-[#222222] mb-6">설정</h2>
+
+              {/* 주문 알림음 카드 */}
+              <div className="bg-white rounded-xl border border-[#E8E8E8] overflow-hidden">
+                <div className="px-6 py-4 border-b border-[#F0F0F0]">
+                  <h3 className="text-[14px] font-bold text-[#222222]">🔔 주문 알림음</h3>
+                  <p className="text-[12px] text-[#727272] mt-0.5">새 주문이 들어올 때 울리는 소리를 설정합니다.</p>
+                </div>
+
+                <div className="px-6 py-5 space-y-6">
+
+                  {/* 알림음 종류 선택 */}
+                  <div>
+                    <p className="text-[12px] font-semibold text-[#727272] mb-3">알림음 종류</p>
+                    <div className="flex flex-col gap-2">
+                      {([
+                        { key: 'chime', label: '차임 (기본)', desc: '부드러운 4음 차임' },
+                        { key: 'bell',  label: '딩동',        desc: '딩동 2음 벨 소리' },
+                        { key: 'beep',  label: '비프',        desc: '짧고 또렷한 전자음' },
+                      ] as { key: SoundType; label: string; desc: string }[]).map(({ key, label, desc }) => (
+                        <label
+                          key={key}
+                          className="flex items-center gap-3 px-4 py-3 rounded-lg border cursor-pointer transition-colors"
+                          style={{
+                            borderColor: soundType === key ? '#017333' : '#E8E8E8',
+                            background:  soundType === key ? '#E6F4EC' : 'white',
+                          }}
+                        >
+                          <input
+                            type="radio"
+                            name="soundType"
+                            value={key}
+                            checked={soundType === key}
+                            onChange={() => setSoundType(key)}
+                            className="accent-[#017333]"
+                          />
+                          <div className="flex-1">
+                            <span className="text-[13px] font-semibold text-[#222222]">{label}</span>
+                            <span className="ml-2 text-[11px] text-[#A0A0A0]">{desc}</span>
+                          </div>
+                          {/* 미리 듣기 (개별) */}
+                          <button
+                            onClick={e => { e.preventDefault(); playSound(key, soundVolume) }}
+                            disabled={isPlaying}
+                            className="flex items-center gap-1 px-3 py-1.5 border border-[#D7D7D7] rounded-lg text-[12px] font-semibold text-[#555] hover:bg-[#F5F5F5] disabled:opacity-40 transition-colors"
+                          >
+                            {isPlaying ? '재생 중…' : '▶ 듣기'}
+                          </button>
+                        </label>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* 볼륨 슬라이더 */}
+                  <div>
+                    <div className="flex items-center justify-between mb-2">
+                      <p className="text-[12px] font-semibold text-[#727272]">볼륨</p>
+                      <span className="text-[12px] font-bold text-[#222222]">{soundVolume}%</span>
+                    </div>
+                    <input
+                      type="range"
+                      min={0}
+                      max={100}
+                      value={soundVolume}
+                      onChange={e => setSoundVolume(Number(e.target.value))}
+                      className="w-full h-1.5 rounded-full appearance-none cursor-pointer"
+                      style={{ accentColor: '#017333' }}
+                    />
+                    <div className="flex justify-between text-[11px] text-[#C0C0C0] mt-1">
+                      <span>무음</span>
+                      <span>최대</span>
+                    </div>
+                  </div>
+
+                  {/* 전체 미리 듣기 버튼 */}
+                  <button
+                    onClick={() => playSound()}
+                    disabled={isPlaying}
+                    className="w-full py-3 rounded-xl text-[14px] font-bold transition-all active:scale-[0.98] disabled:opacity-50"
+                    style={{
+                      background: isPlaying ? '#D7D7D7' : '#222222',
+                      color: 'white',
+                    }}
+                  >
+                    {isPlaying ? '⏸ 재생 중…' : '▶ 알림음 미리 듣기'}
+                  </button>
+                </div>
+              </div>
+            </section>
+          )}
+
           {/* ─ 나머지 탭 ─ */}
-          {activeNav !== 'dashboard' && activeNav !== 'orders' && activeNav !== 'menus' && (
+          {activeNav !== 'dashboard' && activeNav !== 'orders' && activeNav !== 'menus' && activeNav !== 'settings' && (
             <div className="flex items-center justify-center h-[60vh] text-[14px] text-[#A0A0A0]">
               {NAV_ITEMS.find(n => n.id === activeNav)?.label} 화면은 준비 중입니다.
             </div>
@@ -461,7 +622,7 @@ export default function PosPage() {
       {cancelTarget && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-6">
           <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm p-6">
-            <h3 className="text-[16px] font-bold text-[#1E1E1E] mb-1">주문 취소</h3>
+            <h3 className="text-[16px] font-bold text-[#222222] mb-1">주문 취소</h3>
             <p className="text-[13px] text-[#727272] mb-5">취소 사유를 선택해 주세요.</p>
             <div className="flex flex-wrap gap-2 mb-6">
               {CANCEL_REASONS.map(reason => (
@@ -472,7 +633,7 @@ export default function PosPage() {
                     'px-3 py-2 rounded-lg text-[13px] font-semibold border transition-colors',
                     cancelReason === reason
                       ? 'bg-[#C92A2A] border-[#C92A2A] text-white'
-                      : 'border-[#D7D7D7] text-[#1E1E1E] hover:bg-[#F5F5F5]',
+                      : 'border-[#D7D7D7] text-[#222222] hover:bg-[#F5F5F5]',
                   ].join(' ')}
                 >{reason}</button>
               ))}
@@ -502,7 +663,7 @@ export default function PosPage() {
 
               {/* 모달 헤더 */}
               <div className="px-6 pt-5 pb-4 border-b border-[#F0F0F0]">
-                <h3 className="text-[15px] font-bold text-[#1E1E1E]">메뉴 사진 변경</h3>
+                <h3 className="text-[15px] font-bold text-[#222222]">메뉴 사진 변경</h3>
                 <p className="text-[12px] text-[#727272] mt-0.5">{menu.name}</p>
               </div>
 
@@ -533,7 +694,7 @@ export default function PosPage() {
                     <div className="absolute inset-0 flex flex-col items-center justify-center gap-3">
                       <span style={{ fontSize: 52 }}>{menu.emoji}</span>
                       <div className="text-center">
-                        <p className="text-[13px] font-semibold text-[#1E1E1E]">클릭하여 사진 업로드</p>
+                        <p className="text-[13px] font-semibold text-[#222222]">클릭하여 사진 업로드</p>
                         <p className="text-[11px] text-[#A0A0A0] mt-0.5">또는 파일을 여기에 드래그</p>
                       </div>
                     </div>
@@ -559,7 +720,7 @@ export default function PosPage() {
                 <div className="mt-4 flex gap-2">
                   <button
                     onClick={() => fileInputRef.current?.click()}
-                    className="flex-1 py-2.5 border border-[#D7D7D7] rounded-lg text-[13px] font-semibold text-[#1E1E1E] hover:bg-[#F5F5F5] transition-colors"
+                    className="flex-1 py-2.5 border border-[#D7D7D7] rounded-lg text-[13px] font-semibold text-[#222222] hover:bg-[#F5F5F5] transition-colors"
                   >
                     파일 선택
                   </button>
@@ -593,7 +754,7 @@ export default function PosPage() {
                 </button>
                 <button
                   onClick={handleImgSave}
-                  className="flex-1 py-3 bg-[#1E1E1E] text-white rounded-xl text-[14px] font-bold hover:bg-[#3D3D3D] transition-colors"
+                  className="flex-1 py-3 bg-[#222222] text-white rounded-xl text-[14px] font-bold hover:bg-[#3D3D3D] transition-colors"
                 >
                   저장
                 </button>
@@ -611,7 +772,7 @@ function StatCard({ label, value, accent }: { label: string; value: string; acce
   return (
     <div className={`rounded-xl px-5 py-4 border ${accent ? 'bg-[#FFF8F0] border-[#FFD699]' : 'bg-white border-[#E8E8E8]'}`}>
       <div className="text-[12px] font-semibold text-[#727272] mb-1">{label}</div>
-      <div className={`text-[22px] font-bold ${accent ? 'text-[#E65100]' : 'text-[#1E1E1E]'}`}>{value}</div>
+      <div className={`text-[22px] font-bold ${accent ? 'text-[#E65100]' : 'text-[#222222]'}`}>{value}</div>
     </div>
   )
 }

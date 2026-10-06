@@ -9,6 +9,10 @@ interface CartState {
   items: CartItem[]
   method: OrderMethod
   remarks: string
+  calculatedDeliveryFee: number | null  // 거리 기반 계산 결과 (주소 미설정/계산 실패 시 null → DELIVERY_FEE 폴백)
+  deliveryDistanceM: number | null
+  deliveryLat: number | null
+  deliveryLng: number | null
 
   addItem: (
     menuCode: string,
@@ -22,6 +26,7 @@ interface CartState {
   removeItem: (cartId: string) => void
   setMethod: (m: OrderMethod) => void
   setRemarks: (r: string) => void
+  setDeliveryCalculation: (fee: number | null, distanceM: number | null, lat?: number | null, lng?: number | null) => void
   clearCart: () => void
 
   // computed
@@ -37,6 +42,10 @@ export const useCartStore = create<CartState>()(
       items: [],
       method: null,
       remarks: '',
+      calculatedDeliveryFee: null,
+      deliveryDistanceM: null,
+      deliveryLat: null,
+      deliveryLng: null,
 
       addItem: (menuCode, menuName, basePrice, qty, selectedOptions, imageUrl) => {
         const item: CartItem = {
@@ -69,8 +78,10 @@ export const useCartStore = create<CartState>()(
 
       setMethod: (method) => set({ method }),
       setRemarks: (remarks) => set({ remarks }),
+      setDeliveryCalculation: (fee, distanceM, lat = null, lng = null) =>
+        set({ calculatedDeliveryFee: fee, deliveryDistanceM: distanceM, deliveryLat: lat, deliveryLng: lng }),
 
-      clearCart: () => set({ items: [], method: null, remarks: '' }),
+      clearCart: () => set({ items: [], method: null, remarks: '', calculatedDeliveryFee: null, deliveryDistanceM: null, deliveryLat: null, deliveryLng: null }),
 
       // 총 수량
       totalQty: () => get().items.reduce((s, i) => s + i.qty, 0),
@@ -78,8 +89,8 @@ export const useCartStore = create<CartState>()(
       // 메뉴소계 = Σ(subtotal)
       totalSubtotal: () => get().items.reduce((s, i) => s + i.subtotal, 0),
 
-      // 배달료: 배달 선택 시에만 3,500원
-      deliveryFee: () => get().method === '배달' ? DELIVERY_FEE : 0,
+      // 배달료: 배달 선택 시 거리 기반 계산값, 아직 계산 전/실패 시 DELIVERY_FEE 폴백
+      deliveryFee: () => get().method === '배달' ? (get().calculatedDeliveryFee ?? DELIVERY_FEE) : 0,
 
       // 총금액 = 메뉴소계 + 배달료
       totalAmount: () => {

@@ -1,5 +1,5 @@
 import { initializeApp, getApps } from 'firebase/app'
-import { getAnalytics, logEvent, type Analytics } from 'firebase/analytics'
+import { getAnalytics, logEvent, setUserId, type Analytics } from 'firebase/analytics'
 
 const firebaseConfig = {
   apiKey:            'AIzaSyClvk8-NJRk3-AJE2Ns_69vPic-bHMu0rI',
@@ -26,4 +26,14 @@ export function track(eventName: string, params?: Record<string, unknown>) {
   const a = getFirebaseAnalytics()
   if (!a) return
   logEvent(a, eventName, params)
+}
+
+/**
+ * 주문자 확정 시점에 호출 — GA에서 사용자별 행동 추적 가능
+ * userId: `${accountCode}_${ordererName}` 형식으로 Supabase와 매칭
+ */
+export function setGAUserId(accountCode: string, ordererName: string) {
+  const a = getFirebaseAnalytics()
+  if (!a) return
+  setUserId(a, `${accountCode}_${ordererName}`)
 }

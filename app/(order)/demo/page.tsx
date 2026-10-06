@@ -53,10 +53,14 @@ export default function DemoPage() {
 
   if (error) {
     return (
-      <div className="screen flex items-center justify-center">
-        <div className="text-center p-6">
-          <p className="text-[#C92A2A] text-sm mb-4">{error}</p>
-          <a href="/" className="text-[13px] text-[#727272] underline">처음으로</a>
+      <div className="screen flex flex-col">
+        <div className="flex-1 flex items-center justify-center px-8 text-center">
+          <p className="text-[#C92A2A] text-[14px]">{error}</p>
+        </div>
+        <div className="px-5 pb-10 pt-4">
+          <a href="/" className="block w-full py-4 rounded-2xl bg-[#222222] text-white text-[15px] font-bold text-center">
+            처음으로
+          </a>
         </div>
       </div>
     )

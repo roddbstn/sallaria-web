@@ -9,6 +9,7 @@
   --gray-bg: #FAFAFA;
   --gray-50: #F5F5F5;
   --danger: #C92A2A;
+  --surface: #FCFCFC;
   --shadow-lg: 0 -4px 20px rgba(0,0,0,0.08);
 }
 
@@ -21,6 +22,7 @@
   --color-gray-bg: #FAFAFA;
   --color-gray-50: #F5F5F5;
   --color-danger: #C92A2A;
+  --color-surface: #FCFCFC;
 }
 
 html {
@@ -75,6 +77,6 @@ button:active {
   min-height: 100dvh;
   display: flex;
   flex-direction: column;
-  background: #fff;
+  background: var(--surface);
   position: relative;
 }

@@ -27,23 +27,22 @@ export default function OptionGroup({
 
   return (
     <div className={[
-      'border-t border-[#F0F0F0]',
-      isMissing ? 'border-l-[3px] border-l-[#C92A2A]' : '',
+      isMissing ? 'border-l-[3px] border-l-danger' : '',
       groupSoldOut ? 'opacity-50' : '',
     ].join(' ')}>
       {/* 그룹 헤더 */}
-      <div className="flex items-center gap-2 px-5 py-3">
-        <span className="text-[14px] font-bold text-[#1E1E1E]">{group.group}</span>
+      <div className="flex items-center justify-between px-5 py-3">
+        <span className="text-[16px] font-bold text-ink">{group.group}</span>
         {groupSoldOut ? (
-          <span className="text-[11px] font-semibold text-white bg-[#727272] px-[7px] py-[2px] rounded-full">
+          <span className="text-[11px] font-semibold text-white bg-gray-text px-[7px] py-[2px] rounded-full">
             품절
           </span>
         ) : group.required ? (
-          <span className="text-[11px] font-semibold text-[#C92A2A] bg-[#FFF0F0] px-[7px] py-[2px] rounded-full">
+          <span className="text-[11px] font-semibold uppercase tracking-wide text-danger">
             필수
           </span>
         ) : (
-          <span className="text-[11px] font-semibold text-[#727272] bg-[#F5F5F5] px-[7px] py-[2px] rounded-full">
+          <span className="text-[11px] font-semibold uppercase tracking-wide text-gray-text">
             {group.multi ? '복수선택' : '선택'}
           </span>
         )}
@@ -69,8 +68,8 @@ export default function OptionGroup({
               priceLabel = formatWon(basePrice + item.plus)
             } else if (item.plus > 0) {
               priceLabel = `+${formatWon(item.plus)}`
-            } else if (item.plus === 0 && !showFinalPrice) {
-              priceLabel = '포함'
+            } else if (item.plus === 0 && !showFinalPrice && isSoldOut) {
+              priceLabel = '품절'
             }
           }
 
@@ -90,8 +89,8 @@ export default function OptionGroup({
                     'w-[20px] h-[20px] rounded-[4px] border-2 flex items-center justify-center flex-shrink-0',
                     'transition-transform active:scale-90',
                     isSelected
-                      ? 'bg-[#017333] border-[#017333]'
-                      : 'border-[#D7D7D7]',
+                      ? 'bg-green border-green'
+                      : 'border-gray-border',
                   ].join(' ')}>
                     {isSelected && (
                       <svg width="12" height="9" viewBox="0 0 12 9" fill="none">
@@ -104,29 +103,28 @@ export default function OptionGroup({
                     'w-[20px] h-[20px] rounded-full border-2 flex items-center justify-center flex-shrink-0',
                     'transition-transform active:scale-90',
                     isSelected
-                      ? 'border-[#017333]'
-                      : 'border-[#D7D7D7]',
+                      ? 'border-green'
+                      : 'border-gray-border',
                   ].join(' ')}>
                     {isSelected && (
-                      <div className="w-[10px] h-[10px] rounded-full bg-[#017333]" />
+                      <div className="w-[10px] h-[10px] rounded-full bg-green" />
                     )}
                   </div>
                 )}
 
                 <span className={[
-                  'text-[14px]',
-                  isSelected ? 'font-semibold text-[#1E1E1E]' : 'text-[#1E1E1E]',
-                  isSoldOut ? 'line-through text-[#727272]' : '',
+                  'text-[14px] text-ink',
+                  isSelected ? 'font-semibold' : '',
+                  isSoldOut ? 'text-[#ABABAB]' : '',
                 ].join(' ')}>
                   {displayName}
-                  {isSoldOut && <span className="ml-2 text-[11px] text-[#727272]">품절</span>}
                 </span>
               </div>
 
               {priceLabel && (
                 <span className={[
                   'text-[13px] flex-shrink-0',
-                  isSelected ? 'font-semibold text-[#017333]' : 'font-normal text-[#ABABAB]',
+                  isSelected ? 'font-semibold text-green' : 'font-normal text-[#ABABAB]',
                   showFinalPrice ? 'text-[14px]' : '',
                 ].join(' ')}>
                   {priceLabel}

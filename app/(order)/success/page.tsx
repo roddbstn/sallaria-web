@@ -8,6 +8,7 @@ import { formatWon } from '@/lib/utils'
 import { track } from '@/lib/firebase'
 import { ampTrack } from '@/lib/amplitude'
 import type { CartItem } from '@/lib/types'
+import FeedbackModal from '@/components/feedback/feedback-modal'
 
 type OrderResultStatus = 'pending' | 'accepted' | 'rejected'
 
@@ -15,6 +16,10 @@ function formatTime(s: number): string {
   const m = Math.floor(s / 60)
   const sec = s % 60
   return `${m}:${String(sec).padStart(2, '0')}`
+}
+
+function formatDistance(m: number): string {
+  return m >= 1000 ? `${(m / 1000).toFixed(1)}km` : `${m}m`
 }
 
 export default function SuccessPage() {
@@ -34,6 +39,8 @@ function SuccessPageInner() {
   const [orderCode,        setOrderCode]         = useState<string | null>(null)
   const [orderNumber,      setOrderNumber]       = useState<string | null>(null)
   const [orderMethod,      setOrderMethod]       = useState<string>('')
+  const [orderDeliveryFee, setOrderDeliveryFee]  = useState<number>(0)
+  const [orderDistanceM,  setOrderDistanceM]     = useState<number | null>(null)
   const [orderTotal,       setOrderTotal]        = useState<number>(0)
   const [orderOrderer,     setOrderOrderer]      = useState<string>('')
   const [orderPhone,       setOrderPhone]        = useState<string>('')
@@ -42,6 +49,7 @@ function SuccessPageInner() {
   const [orderBalanceAfter, setOrderBalanceAfter]   = useState<number | null>(null)
   const [rejectedReason,   setRejectedReason]    = useState<string>('')
   const [showReview,       setShowReview]        = useState(false)
+  const [showFeedback,     setShowFeedback]      = useState(false)
 
   // 타이머
   const [totalSeconds,  setTotalSeconds]  = useState<number | null>(null)
@@ -216,7 +224,7 @@ function SuccessPageInner() {
       const supabase = getSupabaseClient()
       supabase
         .from('orders')
-        .select('order_number, orderer_name, orderer_phone, method, total_amount, balance_before, balance_after, accounts ( account_name )')
+        .select('order_number, orderer_name, orderer_phone, method, delivery_fee, delivery_distance_m, total_amount, balance_before, balance_after, accounts ( account_name )')
         .eq('order_code', urlCode)
         .maybeSingle()
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -224,6 +232,8 @@ function SuccessPageInner() {
           if (!data) return
           setOrderNumber(data.order_number ?? urlCode)
           setOrderMethod(data.method ?? '')
+          setOrderDeliveryFee(data.delivery_fee ?? 0)
+          setOrderDistanceM(data.delivery_distance_m ?? null)
           setOrderTotal(data.total_amount ?? 0)
           setOrderOrderer(data.orderer_name ?? '')
           setOrderPhone(data.orderer_phone ?? '')
@@ -240,6 +250,8 @@ function SuccessPageInner() {
     // ── 일반 세션 경로 (sessionStorage에서 읽기) ──
     const num            = sessionStorage.getItem('last_order_number')
     const method         = sessionStorage.getItem('last_order_method') ?? ''
+    const deliveryFeeRaw = sessionStorage.getItem('last_order_delivery_fee')
+    const deliveryDistanceRaw = sessionStorage.getItem('last_order_delivery_distance_m')
     const total          = Number(sessionStorage.getItem('last_order_total') ?? '0')
     const orderer        = sessionStorage.getItem('last_order_orderer') ?? ''
     const phone          = sessionStorage.getItem('last_order_phone') ?? ''
@@ -250,6 +262,8 @@ function SuccessPageInner() {
     setOrderCode(code)
     setOrderNumber(num)
     setOrderMethod(method)
+    if (deliveryFeeRaw !== null) setOrderDeliveryFee(Number(deliveryFeeRaw))
+    if (deliveryDistanceRaw) setOrderDistanceM(Number(deliveryDistanceRaw))
     setOrderTotal(total)
     setOrderOrderer(orderer)
     setOrderPhone(phone)
@@ -452,9 +466,53 @@ function SuccessPageInner() {
   // ── 5초 후 리뷰 바 표시 ───────────────────────────────────────────────
   useEffect(() => {
     if (status !== 'accepted') return
-    const t = setTimeout(() => setShowReview(true), 5000)
+    const t = setTimeout(() => {
+      setShowReview(true)
+      track('review_prompt_shown')
+      ampTrack('review_prompt_shown')
+    }, 5000)
     return () => clearTimeout(t)
   }, [status])
+
+  // ── 주문 접수 직후 만족도 설문 모달 (주문당 1회) ─────────────────────
+  useEffect(() => {
+    if (status !== 'accepted') return
+    if (sessionStorage.getItem('last_order_feedback_done') === '1') return
+    setShowFeedback(true)
+  }, [status])
+
+  function dismissFeedback() {
+    sessionStorage.setItem('last_order_feedback_done', '1')
+    setShowFeedback(false)
+  }
+
+  // ── 이탈 시점 로깅 — 접수 전/후 중 어느 대기 단계에서 나가는지 구분 ────
+  // status: pending(접수 전 대기) / accepted(접수 후 — 조리 대기 or 준비완료) / rejected
+  useEffect(() => {
+    function handleVisibilityChange() {
+      if (document.visibilityState !== 'hidden') return
+
+      const timerDone = totalSeconds !== null && secondsLeft !== null && secondsLeft === 0
+      const isReadyNow = posCompleted || timerDone
+      const waitPhase =
+        status === 'pending'  ? 'pre_acceptance_wait'   // 접수 전 대기 ("주문을 접수 중이에요...")
+        : status === 'accepted' ? (isReadyNow ? 'ready' : 'post_acceptance_wait') // 접수 후: 조리 대기 vs 준비완료
+        : 'rejected'
+
+      const payload = {
+        status,
+        wait_phase: waitPhase,
+        seconds_left: secondsLeft ?? null,
+        feedback_modal_open: showFeedback,
+        review_prompt_open: showReview,
+      }
+      track('page_exit', payload)
+      ampTrack('page_exit', payload)
+    }
+
+    document.addEventListener('visibilitychange', handleVisibilityChange)
+    return () => document.removeEventListener('visibilitychange', handleVisibilityChange)
+  }, [status, posCompleted, totalSeconds, secondsLeft, showFeedback, showReview])
 
   // ── Pending ───────────────────────────────────────────────────────────
   if (status === 'pending') {
@@ -462,7 +520,7 @@ function SuccessPageInner() {
       <div className="screen">
         <div className="flex-1 flex flex-col items-center justify-center gap-4 px-8">
           <div className="w-16 h-16 rounded-full border-4 border-[#D7D7D7] border-t-[#017333] animate-spin" />
-          <p className="text-base font-semibold text-[#1E1E1E]">주문을 접수 중이에요...</p>
+          <p className="text-base font-semibold text-[#222222]">주문을 접수 중이에요...</p>
           <p className="text-sm text-[#727272] text-center">
             잠시만 기다려주세요.
           </p>
@@ -477,7 +535,7 @@ function SuccessPageInner() {
       <div className="screen">
         <div className="flex-1 flex flex-col items-center justify-center gap-4 px-8">
           <span className="text-[72px] leading-none">😢</span>
-          <p className="text-lg font-bold text-[#1E1E1E]">주문이 거부되었어요</p>
+          <p className="text-lg font-bold text-[#222222]">주문이 거부되었어요</p>
           <div className="w-full px-4 py-3 bg-red-50 rounded-xl">
             <p className="text-sm text-[#C92A2A] text-center">
               매장에서 &lsquo;{rejectedReason || '사유 미입력'}&rsquo;로 인해 주문을 거부하였어요
@@ -500,6 +558,7 @@ function SuccessPageInner() {
 
   return (
     <div className="screen" style={{ paddingBottom: showReview ? '80px' : '0' }}>
+      {showFeedback && <FeedbackModal onClose={dismissFeedback} />}
       <div className="flex-1 overflow-y-auto px-4 pt-8 pb-6 space-y-4">
 
         {/* 타이틀 */}
@@ -535,7 +594,7 @@ function SuccessPageInner() {
           /* ── 접수 완료: 기존 레이아웃 ── */
           <div className="flex items-center justify-between">
             <div>
-              <p className="text-xl font-bold text-[#1E1E1E]">주문이 접수됐어요!</p>
+              <p className="text-xl font-bold text-[#222222]">주문이 접수됐어요!</p>
               {(orderNumber ?? orderCode) && (
                 <span className="inline-block border border-[#b2dfc3] bg-[#E6F4EC] rounded-xl px-3 py-1 font-mono font-bold text-[#017333] text-[36px] tracking-widest leading-none mt-2">
                   #{orderNumber ?? orderCode}
@@ -555,9 +614,9 @@ function SuccessPageInner() {
             <p className="text-[24px] font-extrabold text-white leading-none mb-3 tabular-nums">
               {formatTime(secondsLeft!)}
             </p>
-            <div className="h-2 bg-white/25 rounded-full overflow-hidden">
+            <div className="h-2 bg-surface/25 rounded-full overflow-hidden">
               <div
-                className="h-full bg-white rounded-full transition-all duration-1000 ease-linear"
+                className="h-full bg-surface rounded-full transition-all duration-1000 ease-linear"
                 style={{ width: `${progress * 100}%` }}
               />
             </div>
@@ -573,45 +632,47 @@ function SuccessPageInner() {
           {orderAccount && (
             <div className="flex justify-between">
               <span className="text-[#727272]">거래처</span>
-              <span className="font-normal text-[#1E1E1E]">{orderAccount}</span>
+              <span className="font-normal text-[#222222]">{orderAccount}</span>
             </div>
           )}
           {orderOrderer && (
             <div className="flex justify-between">
               <span className="text-[#727272]">주문자</span>
-              <span className="font-normal text-[#1E1E1E]">{orderOrderer}</span>
+              <span className="font-normal text-[#222222]">{orderOrderer}</span>
             </div>
           )}
           {orderPhone && (
             <div className="flex justify-between">
               <span className="text-[#727272]">연락처</span>
-              <span className="font-normal text-[#1E1E1E]">{orderPhone}</span>
+              <span className="font-normal text-[#222222]">{orderPhone}</span>
             </div>
           )}
           {orderMethod && (
             <div className="flex justify-between">
               <span className="text-[#727272]">이용방법</span>
-              <span className="font-normal text-[#1E1E1E]">
-                {orderMethod}{orderMethod === '배달' ? ' (+3,500원)' : ''}
+              <span className="font-normal text-[#222222]">
+                {orderMethod}{orderMethod === '배달' && orderDeliveryFee > 0 ? (
+                  ` (+${formatWon(orderDeliveryFee)}${orderDistanceM != null ? ` · ${formatDistance(orderDistanceM)}` : ''})`
+                ) : ''}
               </span>
             </div>
           )}
           {orderBalanceBefore !== null && (
             <div className="flex justify-between pt-2 border-t border-[#F0F0F0]">
               <span className="text-[#727272]">기존 선결제 잔액</span>
-              <span className="font-normal text-[#1E1E1E]">{formatWon(orderBalanceBefore)}</span>
+              <span className="font-normal text-[#222222]">{formatWon(orderBalanceBefore)}</span>
             </div>
           )}
           {orderTotal > 0 && (
             <div className="flex justify-between">
               <span className="text-[#727272] font-semibold">결제 금액</span>
-              <span className="font-bold text-[#1E1E1E]">{formatWon(orderTotal)}</span>
+              <span className="font-bold text-[#222222]">{formatWon(orderTotal)}</span>
             </div>
           )}
           {orderBalanceAfter !== null && (
             <div className="flex justify-between pt-3 mt-1 border-t border-[#E8E8E8]">
               <span className="text-[#727272]">주문 후 잔액</span>
-              <span className={`font-normal ${orderBalanceAfter < 0 ? 'text-[#C92A2A]' : 'text-[#1E1E1E]'}`}>
+              <span className={`font-normal ${orderBalanceAfter < 0 ? 'text-[#C92A2A]' : 'text-[#222222]'}`}>
                 {formatWon(orderBalanceAfter)}
               </span>
             </div>
@@ -631,7 +692,7 @@ function SuccessPageInner() {
         {/* 주문 메뉴 목록 */}
         {savedItems.length > 0 && (
           <div>
-            <p className="text-[15px] font-bold text-[#1E1E1E] mb-2">주문 메뉴</p>
+            <p className="text-[15px] font-bold text-[#222222] mb-2">주문 메뉴</p>
             <div className="space-y-3">
               {savedItems.map((item, idx) => {
                 const imgUrl = menuImages[item.menuCode]
@@ -656,11 +717,11 @@ function SuccessPageInner() {
                     {/* 메뉴 정보 */}
                     <div className="flex-1 min-w-0">
                       <div className="flex justify-between items-start gap-2">
-                        <p className="text-[14px] font-semibold text-[#1E1E1E] leading-snug">
+                        <p className="text-[14px] font-semibold text-[#222222] leading-snug">
                           {item.menuName}
                           <span className="text-[#727272] font-normal ml-1">×{item.qty}</span>
                         </p>
-                        <p className="text-[15px] font-bold text-[#1E1E1E] flex-shrink-0">
+                        <p className="text-[15px] font-bold text-[#222222] flex-shrink-0">
                           {formatWon(item.subtotal)}
                         </p>
                       </div>
@@ -678,8 +739,8 @@ function SuccessPageInner() {
         )}
 
         {/* 취소 불가 안내 */}
-        <div className="flex items-start gap-2 px-4 py-3 bg-white rounded-xl border border-[#D7D7D7]">
-          <span className="text-[#1E1E1E] text-sm mt-0.5">ℹ️</span>
+        <div className="flex items-start gap-2 px-4 py-3 bg-surface rounded-xl border border-[#D7D7D7]">
+          <span className="text-[#222222] text-sm mt-0.5">ℹ️</span>
           <p className="text-[13px] text-[#727272] leading-relaxed">
             주문 접수 후에는 취소 및 환불이 어려워요.<br />
             문의는 매장으로 직접 연락해 주세요.
@@ -690,7 +751,7 @@ function SuccessPageInner() {
       {/* 네이버 리뷰 — 하단 스티키 플로팅 */}
       {showReview && (
         <div
-          className="fixed bottom-0 left-0 right-0 max-w-[430px] mx-auto px-4 py-3 bg-white border-t border-[#F0F0F0]"
+          className="fixed bottom-0 left-0 right-0 max-w-[430px] mx-auto px-4 py-3 bg-surface border-t border-[#F0F0F0]"
           style={{ boxShadow: '0 -4px 20px rgba(0,0,0,0.08)' }}
         >
           <p className="text-[12px] text-[#B0B0B0] text-center mb-2">

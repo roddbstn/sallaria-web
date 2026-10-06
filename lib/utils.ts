@@ -1,7 +1,7 @@
 import type { SelectedOption } from './types'
 
-// 배달료 상수
-export const DELIVERY_FEE = 3500
+// 배달료 상수 (26년 10월 1일부터 배달대행 기본요금 인상으로 500원 상향)
+export const DELIVERY_FEE = 4000
 
 // 잔액 경고 기준
 export const LOW_BALANCE = 30000

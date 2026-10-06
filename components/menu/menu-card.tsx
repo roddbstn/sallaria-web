@@ -1,5 +1,6 @@
 import type { Menu } from '@/lib/types'
 import { formatWon } from '@/lib/utils'
+import MenuBadges from './menu-badges'
 
 interface MenuCardProps {
   menu: Menu
@@ -18,13 +19,14 @@ export default function MenuCard({ menu, onClick }: MenuCardProps) {
         if (!isSoldOut && (e.key === 'Enter' || e.key === ' ')) onClick()
       }}
       className={[
-        'flex flex-row-reverse gap-[14px] py-[14px] cursor-pointer',
+        'flex flex-row-reverse gap-[14px] py-[14px] px-2 -mx-2 rounded-xl cursor-pointer',
+        'transition-colors hover:bg-gray-bg active:bg-gray-bg',
         isSoldOut ? 'pointer-events-none opacity-50' : '',
       ].join(' ')}
     >
       {/* 이미지 썸네일 */}
       <div className="relative flex-shrink-0 w-[88px] h-[88px]">
-        <div className="w-[88px] h-[88px] bg-[#F5F5F5] rounded-xl overflow-hidden flex items-center justify-center text-[38px]">
+        <div className="w-[88px] h-[88px] bg-gray-50 rounded-xl overflow-hidden flex items-center justify-center text-[38px]">
           {menu.imageUrl
             ? <img src={menu.imageUrl} alt={menu.name} className="w-full h-full object-cover" />
             : menu.emoji
@@ -36,7 +38,7 @@ export default function MenuCard({ menu, onClick }: MenuCardProps) {
           </div>
         )}
         {!isSoldOut && (
-          <div className="absolute bottom-[6px] right-[6px] w-[26px] h-[26px] bg-white rounded-full flex items-center justify-center pointer-events-none"
+          <div className="absolute bottom-[6px] right-[6px] w-[26px] h-[26px] bg-surface rounded-full flex items-center justify-center pointer-events-none"
             style={{ boxShadow: '0 1px 3px rgba(0,0,0,0.08)' }}
           >
             <svg width="11" height="11" viewBox="0 0 11 11" fill="none">
@@ -49,17 +51,10 @@ export default function MenuCard({ menu, onClick }: MenuCardProps) {
 
       {/* 텍스트 영역 */}
       <div className="flex-1 min-w-0 flex flex-col justify-center gap-[4px]">
-        {/* 태그 뱃지 */}
-        {!isSoldOut && (menu.popular || menu.recommended || menu.isNew) && (
-          <div className="flex gap-1 flex-wrap">
-            {menu.popular     && <span style={{ backgroundColor: '#F97316', color: 'white' }} className="inline-block w-fit text-[13px] font-bold px-[8px] py-[2px] rounded-full">인기</span>}
-            {menu.recommended && <span style={{ backgroundColor: '#16a84c', color: 'white' }} className="inline-block w-fit text-[13px] font-bold px-[8px] py-[2px] rounded-full">추천</span>}
-            {menu.isNew       && <span style={{ backgroundColor: '#1D6FE8', color: 'white' }} className="inline-block w-fit text-[13px] font-bold px-[8px] py-[2px] rounded-full">신메뉴</span>}
-          </div>
-        )}
-        <p className="text-[16px] font-semibold text-[#1E1E1E] leading-snug">{menu.name}</p>
-        <p className="text-[12px] text-[#727272] leading-snug line-clamp-2">{menu.desc}</p>
-        <p className="text-[15px] font-normal text-[#1E1E1E] mt-[2px]">{formatWon(menu.price)}</p>
+        {!isSoldOut && <MenuBadges popular={menu.popular} recommended={menu.recommended} isNew={menu.isNew} />}
+        <p className="text-[16px] font-semibold text-ink leading-snug">{menu.name}</p>
+        <p className="text-[12px] text-gray-text leading-snug line-clamp-2">{menu.desc}</p>
+        <p className="text-[15px] font-normal text-ink mt-[2px]">{formatWon(menu.price)}</p>
       </div>
     </div>
   )

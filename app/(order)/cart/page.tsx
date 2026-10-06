@@ -8,6 +8,7 @@ import CartItemComponent from '@/components/cart/CartItem'
 import CartSummary from '@/components/cart/CartSummary'
 import { formatWon } from '@/lib/utils'
 import { track } from '@/lib/firebase'
+import { ampTrack } from '@/lib/amplitude'
 
 export default function CartPage() {
   const router = useRouter()
@@ -27,6 +28,7 @@ export default function CartPage() {
   // 장바구니 진입 트래킹
   useEffect(() => {
     track('cart_view', { item_count: items.length })
+    ampTrack('cart_view', { item_count: items.length })
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
@@ -35,6 +37,7 @@ export default function CartPage() {
   function handleConfirm() {
     if (isDisabled) return
     track('cart_to_checkout', { item_count: items.length, total: totalAmount() })
+    ampTrack('cart_to_checkout', { item_count: items.length, total: totalAmount() })
     router.push('/checkout')
   }
 
@@ -43,12 +46,13 @@ export default function CartPage() {
     if (!item) return
     const prev = item.qty
     track('cart_item_qty_change', { menu_name: item.menuName, direction: qty > prev ? 'up' : 'down', new_qty: qty })
+    ampTrack('cart_item_qty_change', { menu_name: item.menuName, direction: qty > prev ? 'up' : 'down', new_qty: qty })
     updateItem(cartId, qty, item.selectedOptions)
   }
 
   function handleRemove(cartId: string) {
     const item = items.find((i) => i.cartId === cartId)
-    if (item) track('cart_item_remove', { menu_name: item.menuName })
+    if (item) { track('cart_item_remove', { menu_name: item.menuName }); ampTrack('cart_item_remove', { menu_name: item.menuName }) }
     removeItem(cartId)
   }
 
@@ -56,6 +60,7 @@ export default function CartPage() {
     const item = items.find((i) => i.cartId === cartId)
     if (!item) return
     track('cart_edit_option', { menu_name: item.menuName })
+    ampTrack('cart_edit_option', { menu_name: item.menuName })
     router.push(`/menu?item=${item.menuCode}&edit=${cartId}`)
   }
 
@@ -72,9 +77,9 @@ export default function CartPage() {
           className="-ml-3 p-3 rounded-full hover:bg-[#F5F5F5] transition-colors"
           aria-label="뒤로가기"
         >
-          <svg width="9" height="15" viewBox="0 0 9 15" fill="none"><path d="M8 1L1 7.5L8 14" stroke="#1E1E1E" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></svg>
+          <svg width="9" height="15" viewBox="0 0 9 15" fill="none"><path d="M8 1L1 7.5L8 14" stroke="#222222" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></svg>
         </button>
-        <h1 className="flex-1 text-center text-base font-bold text-[#1E1E1E] pr-9">
+        <h1 className="flex-1 text-center text-base font-bold text-[#222222] pr-9">
           장바구니
         </h1>
       </header>
@@ -86,7 +91,7 @@ export default function CartPage() {
             <p className="text-4xl mb-3">🛒</p>
             <p className="text-sm">장바구니가 비어있어요.</p>
             <button
-              onClick={() => { track('cart_empty_go_menu'); router.push('/menu') }}
+              onClick={() => { track('cart_empty_go_menu'); ampTrack('cart_empty_go_menu'); router.push('/menu') }}
               className="mt-5 px-6 py-3 bg-[#017333] text-white text-sm font-bold rounded-xl active:opacity-80 transition-opacity"
             >
               메뉴 보러가기
@@ -116,21 +121,15 @@ export default function CartPage() {
               currentBalance={currentBalance}
             />
 
-            {/* 잔액 음수 안내 */}
-            {currentBalance - total < 0 && (
-              <p className="mt-2 text-xs text-[#C92A2A] font-semibold text-center">
-                잔액이 부족하지만 주문은 가능합니다. 다음 충전 시 정산됩니다.
-              </p>
-            )}
           </>
         )}
       </div>
 
       {/* Footer */}
-      <footer className="flex-shrink-0 px-4 py-4 border-t border-[#D7D7D7] bg-white shadow-[0_-4px_20px_rgba(0,0,0,0.08)]">
+      <footer className="flex-shrink-0 px-4 py-4 border-t border-[#D7D7D7] bg-surface shadow-[0_-4px_20px_rgba(0,0,0,0.08)]">
         {account && (
           <div className="flex items-center justify-between mb-3 text-sm">
-            <span className="font-semibold text-[#1E1E1E]">{account.name}</span>
+            <span className="font-semibold text-[#222222]">{account.name}</span>
             <span
               className={`font-semibold ${currentBalance < 0 ? 'text-[#C92A2A]' : 'text-[#017333]'}`}
             >
@@ -142,7 +141,7 @@ export default function CartPage() {
           onClick={handleConfirm}
           disabled={isDisabled}
           className={`w-full py-4 rounded-xl font-bold text-white text-base transition-colors ${
-            isDisabled ? 'bg-[#CCC] cursor-not-allowed' : 'bg-[#1E1E1E] active:scale-95'
+            isDisabled ? 'bg-[#CCC] cursor-not-allowed' : 'bg-[#222222] active:scale-95'
           }`}
         >
           확인

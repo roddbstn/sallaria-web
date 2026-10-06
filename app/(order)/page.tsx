@@ -5,24 +5,9 @@ import { useRouter, useSearchParams } from 'next/navigation'
 import { useSessionStore } from '@/lib/store/session'
 import { useCartStore } from '@/lib/store/cart'
 import { getSupabaseClient } from '@/lib/supabase/client'
-import { formatWon } from '@/lib/utils'
 import { track } from '@/lib/firebase'
+import { ampTrack, ampIdentify } from '@/lib/amplitude'
 import type { Account } from '@/lib/types'
-
-// ── 내 주문 이력 타입 ──────────────────────────────────────────────────────────
-interface OrderHistoryEntry {
-  order_code:   string
-  order_number: string
-  account_name: string
-  orderer_name: string
-  ordered_at:   string
-  total_amount: number
-  method:       string
-}
-
-interface OrderHistoryWithStatus extends OrderHistoryEntry {
-  status: string | null   // DB에서 조회한 현재 상태
-}
 
 const PIN_LOCK_LIMIT = 5
 
@@ -52,7 +37,10 @@ function HomePageInner() {
   const [pinError, setPinError] = useState('')
   const [isShaking, setIsShaking] = useState(false)
   const [verifying, setVerifying] = useState(false)
+  const [toastVisible, setToastVisible] = useState(false)
+  const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const [storeName,     setStoreName]     = useState('')
+  const [accountName,   setAccountName]   = useState<string | null>(null)
   const [storeNotFound, setStoreNotFound] = useState(false)
   const [storeClosed,   setStoreClosed]   = useState(false)
   const storeClosedRef = useRef(false)   // verifyPin 스테일 클로저 방지용
@@ -61,11 +49,6 @@ function HomePageInner() {
   // URL에서 매장 구분자 추출 (?store={storeId}) + 거래처 QR 파라미터
   const storeId     = searchParams.get('store')   ?? undefined
   const accountCode = searchParams.get('account') ?? undefined
-
-  // 내 주문 모달
-  const [showHistory,    setShowHistory]    = useState(false)
-  const [historyLoading, setHistoryLoading] = useState(false)
-  const [historyList,    setHistoryList]    = useState<OrderHistoryWithStatus[]>([])
 
   // 비밀번호 찾기
   const [forgotPin,     setForgotPin]     = useState(false)
@@ -94,16 +77,13 @@ function HomePageInner() {
 
       if (accountCode) {
         // 거래처 QR만 있을 때: 해당 거래처의 store_id로 매장명 조회
-        const { data } = await supabase
-          .from('accounts')
-          .select('store_id, stores(name, is_open)')
-          .eq('account_code', accountCode)
-          .maybeSingle()
-        const store = (data as any)?.stores as { name: string; is_open: boolean } | undefined
-        if (store?.name) {
-          setStoreName(store.name)
-          document.title = `${store.name} · 선결제 주문`
-          if (store.is_open === false) { storeClosedRef.current = true; setStoreClosed(true) }
+        // accounts 테이블 직접 조회 금지 — RPC로만 (anon이 전체 거래처를 긁어갈 수 없도록)
+        const { data } = await supabase.rpc('get_account_public', { p_account_code: accountCode })
+        const row = (data as { store_name: string; store_is_open: boolean }[] | null)?.[0]
+        if (row?.store_name) {
+          setStoreName(row.store_name)
+          document.title = `${row.store_name} · 선결제 주문`
+          if (row.store_is_open === false) { storeClosedRef.current = true; setStoreClosed(true) }
         } else {
           setStoreNotFound(true)
         }
@@ -116,6 +96,14 @@ function HomePageInner() {
     loadStoreName()
   }, [storeId, accountCode])
 
+  // 오류 토스트 — pinError 변경 시 3초 표시
+  useEffect(() => {
+    if (!pinError) return
+    setToastVisible(true)
+    if (toastTimerRef.current) clearTimeout(toastTimerRef.current)
+    toastTimerRef.current = setTimeout(() => setToastVisible(false), 3000)
+  }, [pinError])
+
   // 세션 초기화 + 거래처 고유 QR 처리 (?account=코드)
   useEffect(() => {
     // QR 파라미터 없을 때만 세션 초기화 (메뉴→루트 리디렉트 시 세션 유지)
@@ -127,20 +115,17 @@ function HomePageInner() {
 
     async function loadByQr() {
       const supabase = getSupabaseClient()
-      const { data, error } = await supabase
-        .from('accounts')
-        .select('account_code, account_number, account_name, account_type, organization_name, contact_phone, current_balance, store_id')
-        .eq('account_code', accountCode)
-        .eq('is_active', true)
-        .maybeSingle()
+      const { data, error } = await supabase.rpc('get_account_public', { p_account_code: accountCode })
+      const row = (data as { account_code: string; account_name: string }[] | null)?.[0]
 
-      if (error || !data) {
+      if (error || !row) {
         setPinError('QR 코드에 해당하는 거래처를 찾을 수 없습니다. 점주에게 문의하세요.')
         return
       }
 
       // 거래처 특정 완료 — PIN 입력은 그대로 요구 (해당 거래처 PIN만 허용)
-      setQrAccountCode(data.account_code)
+      setQrAccountCode(row.account_code)
+      setAccountName(row.account_name)
     }
     loadByQr()
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -193,31 +178,6 @@ function HomePageInner() {
     }
   }
 
-  async function openHistory() {
-    track('order_history_open')
-    setShowHistory(true)
-    setHistoryLoading(true)
-    try {
-      const raw: OrderHistoryEntry[] = JSON.parse(localStorage.getItem('sallaria_order_history') ?? '[]')
-      if (raw.length === 0) { setHistoryList([]); return }
-
-      const supabase = getSupabaseClient()
-      const codes = raw.map(e => e.order_code)
-      const { data } = await supabase
-        .rpc('get_order_statuses', { p_order_codes: codes })
-
-      const statusMap: Record<string, string> = {}
-      ;(data ?? []).forEach((r: { order_code: string; status: string }) => { statusMap[r.order_code] = r.status })
-
-      setHistoryList(raw.map(e => ({ ...e, status: statusMap[e.order_code] ?? null })))
-    } catch {
-      // localStorage 접근 실패(private 모드 등) 또는 JSON 파싱 실패 시 빈 목록으로 처리
-      setHistoryList([])
-    } finally {
-      setHistoryLoading(false)
-    }
-  }
-
   const isLocked = pinLocked || pinAttempts >= PIN_LOCK_LIMIT
 
   const triggerShake = useCallback(() => {
@@ -233,20 +193,17 @@ function HomePageInner() {
     try {
       const supabase = getSupabaseClient()
 
-      // QR로 거래처가 특정됐으면 해당 거래처 PIN만 확인, 아니면 전체 검색
-      let query = supabase
-        .from('accounts')
-        .select('account_code, account_number, account_name, account_type, organization_name, contact_phone, current_balance, store_id')
-        .eq('pin_code', inputPin)
-        .eq('is_active', true)
-
-      if (qrAccountCode) {
-        query = query.eq('account_code', qrAccountCode)
-      } else if (storeId) {
-        query = query.eq('store_id', storeId)
-      }
-
-      const { data, error } = await query.maybeSingle()
+      // QR로 거래처가 특정됐으면 해당 거래처 PIN만 확인, 아니면 매장 범위 내 검색.
+      // accounts 테이블 직접 조회 금지 — RPC가 서버에서 스코프(account_code/store_id)를 강제함
+      const { data: rpcData, error } = await supabase.rpc('verify_account_pin', {
+        p_pin:          inputPin,
+        p_store_id:     storeId ?? null,
+        p_account_code: qrAccountCode ?? null,
+      })
+      const data = (rpcData as {
+        account_code: string; account_number: number; account_name: string; account_type: string
+        organization_name: string | null; contact_phone: string | null; current_balance: number; store_id: string | null
+      }[] | null)?.[0]
 
       if (error || !data) {
         const newAttempts = pinAttempts + 1
@@ -258,10 +215,12 @@ function HomePageInner() {
           lockPin()
           setPinError('')
           track('pin_locked', { store_id: storeId ?? '' })
+          ampTrack('pin_locked', { store_id: storeId ?? '' })
         } else {
           const remaining = PIN_LOCK_LIMIT - newAttempts
           setPinError(`비밀번호가 틀렸습니다. (${newAttempts}회 오류, ${remaining}회 남음)`)
           track('login_fail', { attempts: newAttempts, store_id: storeId ?? '' })
+          ampTrack('login_fail', { attempts: newAttempts, store_id: storeId ?? '' })
         }
         return
       }
@@ -285,6 +244,8 @@ function HomePageInner() {
       setLoginAt(Date.now())
       setPinError('')
       track('pin_login', { account_type: data.account_type, store_id: data.store_id ?? '' })
+      ampIdentify(data.account_code, data.account_type)
+      ampTrack('pin_login', { account_type: data.account_type, store_id: data.store_id ?? '' })
       setTimeout(() => router.push('/menu'), 120)
     } finally {
       setVerifying(false)
@@ -312,9 +273,9 @@ function HomePageInner() {
   // ── QR 코드 없이 직접 접속 ──
   if (storeClosed) {
     return (
-      <div className="flex flex-col items-center justify-center min-h-screen px-8 text-center bg-white">
+      <div className="flex flex-col items-center justify-center min-h-screen px-8 text-center bg-surface">
         <div className="text-[64px] mb-6">🌙</div>
-        <h2 className="text-[20px] font-bold text-[#1E1E1E] mb-3">현재 가게 운영시간이 아니에요</h2>
+        <h2 className="text-[20px] font-bold text-[#222222] mb-3">현재 가게 운영시간이 아니에요</h2>
         <p className="text-[14px] text-[#727272] leading-relaxed">
           운영을 잠시 쉬고 있어요.<br />
           가게 운영시간에 다시 방문해 주세요 😊
@@ -325,9 +286,9 @@ function HomePageInner() {
 
   if (storeNotFound) {
     return (
-      <div className="flex flex-col items-center justify-center min-h-screen px-8 text-center bg-white">
+      <div className="flex flex-col items-center justify-center min-h-screen px-8 text-center bg-surface">
         <div className="text-5xl mb-6">📷</div>
-        <h2 className="text-[18px] font-bold text-[#1E1E1E] mb-3">매장 QR 코드를 스캔해 주세요</h2>
+        <h2 className="text-[18px] font-bold text-[#222222] mb-3">매장 QR 코드를 스캔해 주세요</h2>
         <p className="text-[14px] text-[#727272] leading-relaxed">
           매장에 부착된 QR 코드를 스캔하면<br />해당 매장의 선결제 주문 화면으로 이동합니다.
         </p>
@@ -338,9 +299,9 @@ function HomePageInner() {
   // ── 잠김 화면 ──
   if (isLocked) {
     return (
-      <div className="flex flex-col items-center justify-center min-h-screen px-8 text-center bg-white">
+      <div className="flex flex-col items-center justify-center min-h-screen px-8 text-center bg-surface">
         <div className="text-5xl mb-6">🔒</div>
-        <h2 className="text-[18px] font-bold text-[#1E1E1E] mb-3">입력이 제한되었습니다</h2>
+        <h2 className="text-[18px] font-bold text-[#222222] mb-3">입력이 제한되었습니다</h2>
         <p className="text-[14px] text-[#727272] leading-relaxed">
           5회 오류로 입력이 제한되었습니다.<br />
           QR 코드를 다시 스캔해 주세요.
@@ -352,19 +313,19 @@ function HomePageInner() {
   // ── 비밀번호 찾기 결과 화면 ──
   if (forgotPin && forgotResult) {
     return (
-      <div className="flex flex-col min-h-screen bg-white px-6 pt-16">
+      <div className="flex flex-col min-h-screen bg-surface px-6 pt-16">
         <button
           onClick={() => { setForgotPin(false); setForgotResult(null); setForgotName(''); setForgotPhone('') }}
           className="-ml-3 p-3 mb-10 self-start"
         >
-          <svg width="9" height="15" viewBox="0 0 9 15" fill="none"><path d="M8 1L1 7.5L8 14" stroke="#1E1E1E" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></svg>
+          <svg width="9" height="15" viewBox="0 0 9 15" fill="none"><path d="M8 1L1 7.5L8 14" stroke="#222222" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></svg>
         </button>
         <div className="flex flex-col gap-4">
           <div className="w-16 h-16 rounded-full flex items-center justify-center mb-2"
             style={{ background: 'linear-gradient(135deg, #02a84e 0%, #017333 60%, #015a28 100%)' }}>
             <span className="text-white text-3xl font-bold leading-none">✓</span>
           </div>
-          <p className="text-[22px] font-bold text-[#1E1E1E] leading-snug">
+          <p className="text-[22px] font-bold text-[#222222] leading-snug">
             {forgotResult.accountName} 고객님,<br />
             비밀번호는 <span className="text-[#017333]">{forgotResult.pin}</span> 입니다.
           </p>
@@ -386,14 +347,14 @@ function HomePageInner() {
   // ── 비밀번호 찾기 인증 화면 ──
   if (forgotPin) {
     return (
-      <div className="flex flex-col min-h-screen bg-white px-6 pt-16">
+      <div className="flex flex-col min-h-screen bg-surface px-6 pt-16">
         <button
           onClick={() => { setForgotPin(false); setForgotError('') }}
           className="-ml-3 p-3 mb-8 self-start"
         >
-          <svg width="9" height="15" viewBox="0 0 9 15" fill="none"><path d="M8 1L1 7.5L8 14" stroke="#1E1E1E" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></svg>
+          <svg width="9" height="15" viewBox="0 0 9 15" fill="none"><path d="M8 1L1 7.5L8 14" stroke="#222222" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></svg>
         </button>
-        <h1 className="text-[22px] font-bold text-[#1E1E1E] leading-snug mb-8">
+        <h1 className="text-[22px] font-bold text-[#222222] leading-snug mb-8">
           선결제 고객 확인을 위해<br />인증을 진행해 주세요
         </h1>
 
@@ -404,7 +365,7 @@ function HomePageInner() {
               value={forgotName}
               onChange={e => { setForgotName(e.target.value); setForgotError('') }}
               placeholder="대표자 이름"
-              className="w-full border border-[#D7D7D7] rounded-xl px-4 py-3.5 text-[15px] text-[#1E1E1E] placeholder-[#C0C0C0] focus:outline-none focus:border-[#017333]"
+              className="w-full border border-[#D7D7D7] rounded-xl px-4 py-3.5 text-[15px] text-[#222222] placeholder-[#C0C0C0] focus:outline-none focus:border-[#017333]"
             />
           </div>
           <div>
@@ -414,7 +375,7 @@ function HomePageInner() {
               value={forgotPhone}
               onChange={e => { setForgotPhone(formatPhone(e.target.value)); setForgotError('') }}
               placeholder="휴대폰 번호 (010-0000-0000)"
-              className="w-full border border-[#D7D7D7] rounded-xl px-4 py-3.5 text-[15px] text-[#1E1E1E] placeholder-[#C0C0C0] focus:outline-none focus:border-[#017333]"
+              className="w-full border border-[#D7D7D7] rounded-xl px-4 py-3.5 text-[15px] text-[#222222] placeholder-[#C0C0C0] focus:outline-none focus:border-[#017333]"
             />
           </div>
           {forgotError && (
@@ -447,71 +408,75 @@ function HomePageInner() {
   // ── 매장명 로딩 중 ──
   if (!storeName) {
     return (
-      <div className="flex items-center justify-center min-h-screen bg-white">
+      <div className="flex items-center justify-center min-h-screen bg-surface">
         <div className="w-8 h-8 rounded-full border-2 border-[#D7D7D7] border-t-[#017333] animate-spin" />
       </div>
     )
   }
 
   return (
-    <div className="flex flex-col min-h-screen bg-white">
-      <div className="flex flex-col items-center pt-16 pb-4 px-5">
-        <div className="text-[28px] font-bold text-[#017333] mb-1">{storeName}</div>
-      </div>
+    <div className="flex flex-col min-h-screen bg-surface">
+      {searchParams.get('expired') === '1' && (
+        <div className="mx-5 mt-5 px-4 py-3 rounded-xl bg-[#FFF0F0]">
+          <p className="text-[13px] font-normal text-[#C92A2A] text-left leading-relaxed">
+            주문 시간(5분)이 지났어요. 비밀번호를 다시 입력해주세요.
+          </p>
+        </div>
+      )}
 
-      <div className="text-center px-8 mb-10">
-        <h1 className="text-[20px] font-bold text-[#1E1E1E] mb-2">선결제 비밀번호를 입력해 주세요</h1>
-        {searchParams.get('expired') === '1' ? (
-          <p className="text-[13px] text-[#C92A2A] font-semibold leading-relaxed">
-            주문 시간(5분)이 만료되었습니다.<br />비밀번호를 다시 입력해 주세요.
-          </p>
-        ) : (
-          <p className="text-[13px] text-[#727272] leading-relaxed">
-            거래처에 전달받은 4자리 숫자를 아래에 입력해 주세요.
-          </p>
+      {/* 매장명 + 거래처 — 최상단 한 줄 */}
+      <div className="px-6 pt-8 flex items-center justify-center gap-1">
+        <span className="text-[14px] text-[#222222] font-medium">{storeName}</span>
+        {accountName && (
+          <>
+            <span className="inline-block w-px h-3 bg-[#E0E0E0]" />
+            <span className="text-[14px] text-[#222222] font-medium">{accountName}</span>
+          </>
         )}
       </div>
 
-      <div className={`flex justify-center gap-4 mb-4 ${isShaking ? 'shake' : ''}`}>
+      {/* 타이틀 */}
+      <div className="px-6 pt-10 pb-8 flex flex-col items-center text-center">
+        <h1 className="text-[28px] font-bold text-[#222222] leading-tight">
+          선결제 비밀번호를<br />입력해 주세요
+        </h1>
+      </div>
+
+      <div className={`flex justify-center gap-5 mb-2 mt-12 ${isShaking ? 'shake' : ''}`}>
         {[0, 1, 2, 3].map(i => {
           const filled = i < pin.length
           const hasError = !!pinError
           return (
-            <div
-              key={i}
-              className={[
-                'w-[18px] h-[18px] rounded-full border-2 transition-all duration-150',
-                filled && hasError
-                  ? 'bg-[#C92A2A] border-[#C92A2A]'
-                  : filled
-                  ? 'bg-[#1E1E1E] border-[#1E1E1E]'
-                  : 'border-[#D7D7D7]',
-              ].join(' ')}
-            />
+            <div key={i} className="w-[36px] h-[10px] flex items-center justify-center">
+              {filled ? (
+                <div className={`w-[10px] h-[10px] rounded-full transition-all duration-150 ${hasError ? 'bg-[#C92A2A]' : 'bg-[#222222]'}`} />
+              ) : (
+                <div className="w-full h-[2px] bg-[#D7D7D7] rounded-sm" />
+              )}
+            </div>
           )
         })}
       </div>
 
-      <div className="text-center min-h-[20px] mb-6 px-8">
-        {verifying && (
-          <p className="text-[13px] text-[#017333] font-medium">확인 중...</p>
-        )}
-        {!verifying && pinError && (
-          <p className="text-[13px] text-[#C92A2A] font-medium">{pinError}</p>
-        )}
+      <div className="min-h-[20px] mb-2" />
+
+      {/* 로딩 오버레이 */}
+      {verifying && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-surface">
+          <div className="w-10 h-10 rounded-full border-2 border-[#D7D7D7] border-t-[#017333] animate-spin" />
+        </div>
+      )}
+
+      {/* 에러 토스트 */}
+      <div className={`fixed bottom-8 left-1/2 -translate-x-1/2 z-50 transition-all duration-300 ${
+        toastVisible ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-3 pointer-events-none'
+      }`}>
+        <div className="bg-[#FFF0F0] text-[#C92A2A] text-[13px] font-semibold px-5 py-3 rounded-2xl shadow-lg whitespace-nowrap">
+          {pinError}
+        </div>
       </div>
 
-      {/* 비밀번호 찾기 버튼 */}
-      <div className="flex justify-center mb-4">
-        <button
-          onClick={() => { setForgotPin(true); setForgotError(''); setForgotName(''); setForgotPhone(''); setForgotResult(null) }}
-          className="text-[13px] text-[#727272] underline underline-offset-2"
-        >
-          비밀번호를 잊으셨나요?
-        </button>
-      </div>
-
-      <div className="px-6 flex-1">
+      <div className="px-6 flex-1 pt-5">
         <div className="grid grid-cols-3 gap-3">
           {numpadRows.flat().map((key, idx) => {
             if (key === '') {
@@ -522,7 +487,7 @@ function HomePageInner() {
                 <button
                   key={idx}
                   onClick={() => handleNumpad('del')}
-                  className="h-[68px] bg-[#FAFAFA] rounded-2xl text-[22px] flex items-center justify-center select-none"
+                  className="h-[68px] rounded-2xl text-[22px] flex items-center justify-center select-none"
                   aria-label="지우기"
                 >
                   ⌫
@@ -534,16 +499,29 @@ function HomePageInner() {
                 key={idx}
                 onClick={() => handleNumpad(key)}
                 disabled={verifying}
-                className="h-[68px] bg-[#FAFAFA] rounded-2xl text-[22px] font-semibold text-[#1E1E1E] flex items-center justify-center select-none active:bg-[#E8E8E8] transition-colors disabled:opacity-40"
+                className="h-[68px] rounded-2xl text-[22px] font-semibold text-[#222222] flex items-center justify-center select-none active:bg-[#F0F0F0] transition-colors disabled:opacity-40"
               >
                 {key}
               </button>
             )
           })}
         </div>
+        {/* 비밀번호 찾기 — 0 버튼 바로 아래 */}
+        <div className="grid grid-cols-3 mt-1">
+          <div />
+          <div className="flex justify-center">
+            <button
+              onClick={() => { setForgotPin(true); setForgotError(''); setForgotName(''); setForgotPhone(''); setForgotResult(null) }}
+              className="text-[13px] text-[#727272] underline underline-offset-2 py-2 whitespace-nowrap"
+            >
+              비밀번호를 잊으셨나요?
+            </button>
+          </div>
+          <div />
+        </div>
       </div>
 
-      <div className="flex justify-center pb-8 pt-2">
+      <div className="flex justify-center pb-6 pt-1">
         <a
           href="/privacy"
           className="text-[11px] text-[#AAAAAA] underline underline-offset-2"
@@ -552,87 +530,6 @@ function HomePageInner() {
         </a>
       </div>
 
-      {/* 내 주문 모달 */}
-      {showHistory && (
-        <div
-          className="fixed inset-0 z-50 flex flex-col justify-end bg-black/40"
-          onClick={() => setShowHistory(false)}
-        >
-          <div
-            className="bg-white rounded-t-3xl max-h-[75vh] flex flex-col"
-            onClick={e => e.stopPropagation()}
-          >
-            {/* 핸들 */}
-            <div className="flex justify-center pt-3 pb-1">
-              <div className="w-10 h-1 rounded-full bg-[#D7D7D7]" />
-            </div>
-
-            <div className="px-5 py-3 border-b border-[#F0F0F0] flex items-center justify-between">
-              <span className="text-[16px] font-bold text-[#1E1E1E]">내 주문 내역</span>
-              <button onClick={() => setShowHistory(false)} className="text-[#727272] text-[20px] leading-none">×</button>
-            </div>
-
-            <div className="flex-1 overflow-y-auto">
-              {historyLoading ? (
-                <div className="flex items-center justify-center py-12">
-                  <div className="w-8 h-8 rounded-full border-2 border-[#D7D7D7] border-t-[#017333] animate-spin" />
-                </div>
-              ) : historyList.length === 0 ? (
-                <div className="flex flex-col items-center justify-center py-12 text-[#727272]">
-                  <span className="text-[36px] mb-3">📋</span>
-                  <p className="text-[14px]">이 기기에서 주문한 내역이 없어요</p>
-                </div>
-              ) : (
-                <div className="divide-y divide-[#F0F0F0]">
-                  {historyList.map(order => {
-                    const isActive = order.status === '주문완료' || order.status === '조리중'
-                    const dateStr  = new Date(order.ordered_at).toLocaleDateString('ko-KR', { month: 'long', day: 'numeric' })
-                    const timeStr  = new Date(order.ordered_at).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', hour12: false })
-                    const statusColor =
-                      order.status === '완료'    ? 'bg-[#E6F4EC] text-[#017333]' :
-                      order.status === '취소'    ? 'bg-red-50 text-[#C92A2A]'   :
-                      order.status === '조리중'  ? 'bg-orange-50 text-orange-600' :
-                      order.status === '주문완료' ? 'bg-blue-50 text-blue-600'   :
-                      'bg-[#F5F5F5] text-[#727272]'
-
-                    return (
-                      <div key={order.order_code} className="px-5 py-4">
-                        <div className="flex items-start justify-between gap-3">
-                          <div className="flex-1 min-w-0">
-                            <div className="flex items-center gap-2 mb-1">
-                              <span className="text-[13px] font-bold text-[#1E1E1E]">#{order.order_number}</span>
-                              {order.status && (
-                                <span className={`text-[11px] font-semibold px-2 py-0.5 rounded-full ${statusColor}`}>
-                                  {order.status}
-                                </span>
-                              )}
-                            </div>
-                            <p className="text-[12px] text-[#727272] truncate">
-                              {order.account_name} · {order.orderer_name} · {order.method}
-                            </p>
-                            <p className="text-[11px] text-[#AAAAAA] mt-0.5">{dateStr} {timeStr}</p>
-                          </div>
-                          <div className="flex flex-col items-end gap-2 flex-shrink-0">
-                            <span className="text-[14px] font-bold text-[#1E1E1E]">{formatWon(order.total_amount)}</span>
-                            {isActive && (
-                              <button
-                                onClick={() => { track('order_history_item_click', { status: order.status ?? '' }); setShowHistory(false); router.push(`/success?code=${order.order_code}`) }}
-                                className="text-[12px] font-bold text-white bg-[#017333] px-3 py-1.5 rounded-xl"
-                              >
-                                진행 확인 →
-                              </button>
-                            )}
-                          </div>
-                        </div>
-                      </div>
-                    )
-                  })}
-                </div>
-              )}
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   )
 }

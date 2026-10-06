@@ -52,11 +52,11 @@ export default function CartSummary({
         </div>
       </div>
 
-      {/* 잔액 부족 경고 */}
+      {/* 잔액 부족 안내 */}
       {isNegative && (
-        <div className="mt-3 px-3 py-2 bg-red-50 rounded-lg">
-          <p className="text-xs text-[#C92A2A] font-semibold">
-            ⚠️ 잔액이 부족합니다. 다음 충전 시 정산됩니다.
+        <div className="mt-3 px-3 py-2 bg-[#E6F4EC] rounded-lg">
+          <p className="text-xs text-[#017333] font-semibold">
+            다음 번엔 잔액을 충전해주세요 😊
           </p>
         </div>
       )}

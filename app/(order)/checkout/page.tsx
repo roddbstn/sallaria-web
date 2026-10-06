@@ -7,7 +7,8 @@ import { useSessionStore } from '@/lib/store/session'
 import { formatWon, formatOptionsLabel, DELIVERY_FEE } from '@/lib/utils'
 import type { OrderMethod, OrderItemPayload } from '@/lib/types'
 import { getSupabaseClient } from '@/lib/supabase/client'
-import { track } from '@/lib/firebase'
+import { track, setGAUserId } from '@/lib/firebase'
+import { ampTrack } from '@/lib/amplitude'
 
 declare global {
   interface Window {
@@ -30,7 +31,7 @@ const DELIVERY_REMARK_OPTIONS = [
 const METHOD_OPTIONS: { value: OrderMethod; label: string; emoji: string; extra?: string }[] = [
   { value: '포장', label: '포장', emoji: '🛍️' },
   { value: '내점', label: '매장 식사', emoji: '🍽️' },
-  { value: '배달', label: '배달', emoji: '🛵', extra: '+3,500원' },
+  { value: '배달', label: '배달', emoji: '🛵', extra: `+${formatWon(DELIVERY_FEE)}~` },
 ]
 
 export default function CheckoutPage() {
@@ -45,6 +46,10 @@ export default function CheckoutPage() {
     deliveryFee,
     totalAmount,
     clearCart,
+    deliveryDistanceM,
+    deliveryLat,
+    deliveryLng,
+    setDeliveryCalculation,
   } = useCartStore()
   const { account, setAccount, setOrderer, setPhone } = useSessionStore()
 
@@ -57,8 +62,9 @@ export default function CheckoutPage() {
   const [draftOption, setDraftOption] = useState(DEFAULT_DELIVERY_REMARK)
   const [draftCustomText, setDraftCustomText] = useState('')
   const [isSubmitting, setIsSubmitting] = useState(false)
-  const [error, setError] = useState<string | null>(null)
   const [privacyAgreed, setPrivacyAgreed] = useState(false)
+  const [deliveryCalculating, setDeliveryCalculating] = useState(false)
+  const [deliveryCalcError,  setDeliveryCalcError]  = useState('')
 
   // 이전 주문자 자동완성 칩
   const [members, setMembers] = useState<{ id: string; name: string; phone: string | null; order_count: number }[]>([])
@@ -90,12 +96,43 @@ export default function CheckoutPage() {
     document.body.appendChild(script)
   }, [])
 
+  // 도로명주소 설정 즉시(상세주소 입력 전) 거리별 배달팁 계산 — 대기화면 없이 백그라운드로 처리
+  async function calculateDelivery(road: string) {
+    if (!account?.storeId) {
+      setDeliveryCalcError('매장 정보를 확인할 수 없어요. 처음부터 다시 접속해 주세요.')
+      return
+    }
+    setDeliveryCalculating(true)
+    setDeliveryCalcError('')
+    try {
+      const supabase = getSupabaseClient()
+      const { data, error } = await supabase.functions.invoke('calculate-delivery-fee', {
+        body: { store_id: account.storeId, road_address: road },
+      })
+      if (error || !data?.delivery_fee) {
+        setDeliveryCalcError(data?.error ?? '배달팁 계산에 실패했어요. 주소를 다시 확인해 주세요.')
+        setDeliveryCalculation(null, null)
+        return
+      }
+      setDeliveryCalculation(data.delivery_fee, data.distance_m, data.lat, data.lng)
+    } catch {
+      setDeliveryCalcError('배달팁 계산에 실패했어요. 주소를 다시 확인해 주세요.')
+      setDeliveryCalculation(null, null)
+    } finally {
+      setDeliveryCalculating(false)
+    }
+  }
+
   function openAddressSearch() {
     new window.daum.Postcode({
       oncomplete: (data: any) => {
         const road = data.roadAddress || data.autoRoadAddress || data.jibunAddress || ''
         setBaseAddress(road)
+        setDeliveryCalcError('')
+        setDeliveryCalculation(null, null)
         track('delivery_address_search', { filled: road.length > 0 })
+        ampTrack('delivery_address_search', { filled: road.length > 0 })
+        if (road) calculateDelivery(road)
       },
     }).open()
   }
@@ -174,11 +211,12 @@ export default function CheckoutPage() {
   async function handleOrder() {
     if (!account || !method || items.length === 0) return
     if (!isPersonal && (!ordererName.trim() || !isPhoneValid)) return
-    if (method === '배달' && !baseAddress.trim()) return
+    if (method === '배달' && (!baseAddress.trim() || deliveryCalculating || deliveryCalcError)) return
     setIsSubmitting(true)
-    setError(null)
 
     const finalOrderer = isPersonal ? account.name : ordererName.trim()
+    // GA user_id 설정 — 이후 Firebase Analytics에서 사용자별 행동 추적 가능
+    setGAUserId(account.code, finalOrderer)
     // 칩 선택 시 phoneNumber는 마스킹 표시 — 실제 번호는 members 배열에서 가져옴
     const realPhone    = selectedMemberId
       ? (members.find(m => m.id === selectedMemberId)?.phone ?? phoneNumber)
@@ -220,6 +258,8 @@ export default function CheckoutPage() {
     sessionStorage.setItem('last_order_code',           tempCode)
     sessionStorage.setItem('last_order_number',         '')   // RPC 완료 후 업데이트
     sessionStorage.setItem('last_order_method',         method!)
+    sessionStorage.setItem('last_order_delivery_fee',   String(fee))
+    sessionStorage.setItem('last_order_delivery_distance_m', deliveryDistanceM != null ? String(deliveryDistanceM) : '')
     sessionStorage.setItem('last_order_total',          String(total))
     sessionStorage.setItem('last_order_orderer',        finalOrderer)
     sessionStorage.setItem('last_order_phone',          finalPhone)
@@ -285,8 +325,15 @@ export default function CheckoutPage() {
           p_orderer_phone: finalPhone,
           p_method:        method,
           p_items:         payload,
-          p_delivery_fee:  method === '배달' ? DELIVERY_FEE : 0,
+          p_delivery_fee:  fee,
           p_note:          rpcNote,
+          ...(method === '배달' ? {
+            p_delivery_road_address:   baseAddress.trim() || null,
+            p_delivery_detail_address: detailAddress.trim() || null,
+            p_delivery_lat:            deliveryLat,
+            p_delivery_lng:            deliveryLng,
+            p_delivery_distance_m:     deliveryDistanceM,
+          } : {}),
         }),
       })
 
@@ -295,11 +342,23 @@ export default function CheckoutPage() {
 
       if (!res.ok || !data) {
         console.error('[checkout] RPC error:', rpcError)
-        const reason = (typeof data?.message === 'string' ? data.message : null) ?? '주문 처리에 실패했습니다.'
+        const rawMessage = typeof data?.message === 'string' ? data.message : null
+        const reason = rawMessage === 'STORE_CLOSED'
+          ? '가게 운영이 종료되어 주문할 수 없습니다.'
+          : rawMessage?.startsWith('배달팁 금액이 일치하지 않습니다')
+          ? '배달팁 정보가 변경됐어요. 배달 주소를 다시 검색한 후 주문해 주세요.'
+          : rawMessage ?? '주문 처리에 실패했습니다.'
+        // 주문 실패 — 낙관적으로 차감했던 값 그대로일 때만 원복
+        // (그 사이 충전 등으로 잔액이 이미 다른 값으로 바뀌었으면 덮어쓰지 않음)
+        const latestAfterFail = useSessionStore.getState().account
+        if (latestAfterFail && latestAfterFail.balance === afterBalance) {
+          setAccount(account)
+        }
         sessionStorage.setItem('last_order_failed',      '1')
         sessionStorage.setItem('last_order_fail_reason', reason)
         window.dispatchEvent(new CustomEvent('order_rpc_failed', { detail: { reason } }))
         track('order_fail', { error: reason })
+        ampTrack('order_fail', { error: reason })
         return
       }
 
@@ -337,9 +396,15 @@ export default function CheckoutPage() {
         items:          items.map(i => ({ item_name: i.menuName, quantity: i.qty, price: i.basePrice })),
         method,
       })
+      ampTrack('purchase', { order_code: result.order_code, total, method })
     } catch (err) {
       console.error('[checkout] unexpected error:', err)
       const reason = '주문 처리에 실패했습니다.'
+      // 주문 실패 — 낙관적으로 차감했던 값 그대로일 때만 원복
+      const latestAfterCatch = useSessionStore.getState().account
+      if (latestAfterCatch && latestAfterCatch.balance === afterBalance) {
+        setAccount(account)
+      }
       sessionStorage.setItem('last_order_failed',      '1')
       sessionStorage.setItem('last_order_fail_reason', reason)
       window.dispatchEvent(new CustomEvent('order_rpc_failed', { detail: { reason } }))
@@ -365,16 +430,16 @@ export default function CheckoutPage() {
           className="-ml-3 p-3 rounded-full hover:bg-[#F5F5F5] transition-colors"
           aria-label="뒤로가기"
         >
-          <svg width="9" height="15" viewBox="0 0 9 15" fill="none"><path d="M8 1L1 7.5L8 14" stroke="#1E1E1E" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></svg>
+          <svg width="9" height="15" viewBox="0 0 9 15" fill="none"><path d="M8 1L1 7.5L8 14" stroke="#222222" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></svg>
         </button>
-        <h1 className="flex-1 text-center text-base font-bold text-[#1E1E1E] pr-9">
+        <h1 className="flex-1 text-center text-base font-bold text-[#222222] pr-9">
           주문 확인
         </h1>
       </header>
 
       {/* 데모 모드 배너 */}
       {account?.isDemo && (
-        <div className="bg-[#1E1E1E] text-white text-center text-[12px] font-semibold py-2 px-4 flex-shrink-0">
+        <div className="bg-[#222222] text-white text-center text-[12px] font-semibold py-2 px-4 flex-shrink-0">
           🎮 데모 모드 — 실제 주문은 접수되지 않습니다
         </div>
       )}
@@ -383,7 +448,7 @@ export default function CheckoutPage() {
       <div className="flex-1 overflow-y-auto px-4 py-4 space-y-5">
         {/* 거래처 + 주문자 입력 */}
         <section className="space-y-3">
-          <p className="text-base font-bold text-[#1E1E1E]">{account?.name}</p>
+          <p className="text-base font-bold text-[#222222]">{account?.name}</p>
           {!isPersonal && (
             <>
               {/* 이전 주문자 칩 */}
@@ -400,11 +465,12 @@ export default function CheckoutPage() {
                           setPhoneNumber(maskPhone(m.phone))  // 입력 필드엔 마스킹 표시
                           setSelectedMemberId(m.id)
                           track('member_chip_click', { account_code: account?.code ?? '' })
+                          ampTrack('member_chip_click', { account_code: account?.code ?? '' })
                         }}
                         className={`px-3 py-1.5 rounded-full text-[13px] font-semibold border transition-colors ${
                           selectedMemberId === m.id
-                            ? 'bg-[#1E1E1E] text-white border-[#1E1E1E]'
-                            : 'bg-[#F5F5F5] text-[#1E1E1E] border-transparent'
+                            ? 'bg-[#222222] text-white border-[#222222]'
+                            : 'bg-[#F5F5F5] text-[#222222] border-transparent'
                         }`}
                       >
                         {m.name}
@@ -421,10 +487,10 @@ export default function CheckoutPage() {
                   type="text"
                   value={ordererName}
                   onChange={e => { setOrdererName(e.target.value); setSelectedMemberId(null) }}
-                  onBlur={e => track('name_input', { filled: e.target.value.trim().length > 0 })}
+                  onBlur={e => { track('name_input', { filled: e.target.value.trim().length > 0 }); ampTrack('name_input', { filled: e.target.value.trim().length > 0 }) }}
                   placeholder="예: 김지은"
                   maxLength={20}
-                  className="w-full border border-[#D7D7D7] rounded-xl px-4 py-3 text-sm text-[#1E1E1E] placeholder:text-[#D7D7D7] outline-none focus:border-[#1E1E1E] transition-colors"
+                  className="w-full border border-[#D7D7D7] rounded-xl px-4 py-3 text-sm text-[#222222] placeholder:text-[#D7D7D7] outline-none focus:border-[#222222] transition-colors"
                 />
               </div>
               <div>
@@ -435,10 +501,10 @@ export default function CheckoutPage() {
                   type="tel"
                   value={phoneNumber}
                   onChange={e => { setPhoneNumber(formatPhone(e.target.value)); setSelectedMemberId(null) }}
-                  onBlur={e => track('phone_input', { valid: e.target.value.replace(/\D/g, '').length === 11 })}
+                  onBlur={e => { track('phone_input', { valid: e.target.value.replace(/\D/g, '').length === 11 }); ampTrack('phone_input', { valid: e.target.value.replace(/\D/g, '').length === 11 }) }}
                   placeholder="010-0000-0000"
                   inputMode="numeric"
-                  className="w-full border border-[#D7D7D7] rounded-xl px-4 py-3 text-sm text-[#1E1E1E] placeholder:text-[#D7D7D7] outline-none focus:border-[#1E1E1E] transition-colors"
+                  className="w-full border border-[#D7D7D7] rounded-xl px-4 py-3 text-sm text-[#222222] placeholder:text-[#D7D7D7] outline-none focus:border-[#222222] transition-colors"
                 />
               </div>
             </>
@@ -447,16 +513,16 @@ export default function CheckoutPage() {
 
         {/* 이용방법 선택 */}
         <section>
-          <h2 className="text-sm font-bold text-[#1E1E1E] mb-2">이용방법</h2>
+          <h2 className="text-sm font-bold text-[#222222] mb-2">이용방법</h2>
           <div className="flex gap-2">
             {METHOD_OPTIONS.map((opt) => (
               <button
                 key={opt.value}
-                onClick={() => { track('method_select', { method: opt.value }); setMethod(opt.value) }}
+                onClick={() => { track('method_select', { method: opt.value }); ampTrack('method_select', { method: opt.value }); setMethod(opt.value) }}
                 className={`flex-1 py-3 rounded-xl text-sm font-medium transition-colors ${
                   method === opt.value
                     ? 'bg-[#E6F4EC] text-[#017333]'
-                    : 'bg-[#F5F5F5] text-[#1E1E1E]'
+                    : 'bg-[#F5F5F5] text-[#222222]'
                 }`}
               >
                 <span className="block text-base">{opt.emoji}</span>
@@ -473,12 +539,12 @@ export default function CheckoutPage() {
         {method === '배달' && (
           <section className="space-y-3">
             <div>
-              <label className="text-sm font-bold text-[#1E1E1E] mb-2 block">
+              <label className="text-sm font-bold text-[#222222] mb-2 block">
                 배달 주소 <span className="text-[#C92A2A]">*</span>
               </label>
               {/* 도로명 주소 검색 */}
               <div className="flex gap-2 mb-2">
-                <div className="flex-1 border border-[#D7D7D7] rounded-xl px-4 py-3 text-sm bg-[#FAFAFA] text-[#1E1E1E] min-h-[48px] flex items-center">
+                <div className="flex-1 border border-[#D7D7D7] rounded-xl px-4 py-3 text-sm bg-[#FAFAFA] text-[#222222] min-h-[48px] flex items-center">
                   {baseAddress ? (
                     <span>{baseAddress}</span>
                   ) : (
@@ -488,7 +554,7 @@ export default function CheckoutPage() {
                 <button
                   type="button"
                   onClick={openAddressSearch}
-                  className="flex-shrink-0 px-4 py-3 bg-[#1E1E1E] text-white text-sm font-semibold rounded-xl active:scale-95 transition-transform"
+                  className="flex-shrink-0 px-4 py-3 bg-[#222222] text-white text-sm font-semibold rounded-xl active:scale-95 transition-transform"
                 >
                   주소 검색
                 </button>
@@ -500,15 +566,27 @@ export default function CheckoutPage() {
                 onChange={e => setDetailAddress(e.target.value)}
                 placeholder="예: 2층, 101호"
                 maxLength={60}
-                className="w-full border border-[#D7D7D7] rounded-xl px-4 py-3 text-sm text-[#1E1E1E] placeholder:text-[#D7D7D7] outline-none focus:border-[#1E1E1E] transition-colors"
+                className="w-full border border-[#D7D7D7] rounded-xl px-4 py-3 text-sm text-[#222222] placeholder:text-[#D7D7D7] outline-none focus:border-[#222222] transition-colors"
               />
+              {/* 거리별 배달팁 계산 상태 */}
+              {deliveryCalculating && (
+                <p className="mt-1.5 text-xs text-[#727272]">배달팁 계산 중...</p>
+              )}
+              {!deliveryCalculating && deliveryCalcError && (
+                <p className="mt-1.5 text-xs text-[#C92A2A]">{deliveryCalcError}</p>
+              )}
+              {!deliveryCalculating && !deliveryCalcError && baseAddress && deliveryDistanceM != null && (
+                <p className="mt-1.5 text-xs text-[#727272]">
+                  매장에서 약 {deliveryDistanceM >= 1000 ? `${(deliveryDistanceM / 1000).toFixed(1)}km` : `${deliveryDistanceM}m`} · 배달팁 {formatWon(fee)}
+                </p>
+              )}
             </div>
             <div>
-              <label className="text-sm font-bold text-[#1E1E1E] mb-2 block">배달 요청사항</label>
+              <label className="text-sm font-bold text-[#222222] mb-2 block">배달 요청사항</label>
               <button
                 type="button"
                 onClick={openDeliveryModal}
-                className="w-full border border-[#D7D7D7] rounded-xl px-4 py-3 text-sm text-[#1E1E1E] flex items-center justify-between text-left"
+                className="w-full border border-[#D7D7D7] rounded-xl px-4 py-3 text-sm text-[#222222] flex items-center justify-between text-left"
               >
                 <span className="flex-1 truncate">{deliveryRemarks}</span>
                 <svg className="flex-shrink-0 ml-2 w-4 h-4 text-[#727272]" viewBox="0 0 16 16" fill="none">
@@ -521,7 +599,7 @@ export default function CheckoutPage() {
 
         {/* 가게 요청사항 */}
         <section>
-          <h2 className="text-sm font-bold text-[#1E1E1E] mb-2">가게 요청사항</h2>
+          <h2 className="text-sm font-bold text-[#222222] mb-2">가게 요청사항</h2>
           {/* 퀵 선택 버튼 */}
           <div className="flex flex-wrap gap-2 mb-2">
             {['수저·포크 O', '수저·포크 X', '소스 따로', '덜 맵게', '견과류 제외'].map((label) => {
@@ -530,7 +608,7 @@ export default function CheckoutPage() {
                 <button
                   key={label}
                   type="button"
-                  onClick={() => { track('quick_tag_click', { tag: label, active: !remarks.includes(label) }); handleTag(label) }}
+                  onClick={() => { track('quick_tag_click', { tag: label, active: !remarks.includes(label) }); ampTrack('quick_tag_click', { tag: label, active: !remarks.includes(label) }); handleTag(label) }}
                   className={`px-3 py-1.5 rounded-full text-[13px] font-semibold transition-colors ${
                     active
                       ? 'bg-[#E6F4EC] text-[#017333]'
@@ -546,29 +624,29 @@ export default function CheckoutPage() {
             type="text"
             value={remarks}
             onChange={(e) => setRemarks(e.target.value)}
-            onBlur={e => { if (e.target.value.trim()) track('remarks_input', { filled: true }) }}
+            onBlur={e => { if (e.target.value.trim()) { track('remarks_input', { filled: true }); ampTrack('remarks_input', { filled: true }) } }}
             placeholder="직접 입력 (예: 덜 맵게 해주세요)"
-            className="w-full px-4 py-3 rounded-xl border border-[#D7D7D7] text-sm text-[#1E1E1E] placeholder:text-[#D7D7D7] focus:outline-none focus:border-[#1E1E1E] transition-colors"
+            className="w-full px-4 py-3 rounded-xl border border-[#D7D7D7] text-sm text-[#222222] placeholder:text-[#D7D7D7] focus:outline-none focus:border-[#222222] transition-colors"
           />
         </section>
 
         {/* 주문 메뉴 목록 */}
         <section>
-          <h2 className="text-sm font-bold text-[#1E1E1E] mb-2">주문 메뉴</h2>
+          <h2 className="text-sm font-bold text-[#222222] mb-2">주문 메뉴</h2>
           <div className="space-y-2">
             {items.map((item) => {
               const optionLabel = formatOptionsLabel(item.selectedOptions)
               return (
                 <div key={item.cartId} className="flex justify-between text-sm">
                   <div className="flex-1 min-w-0 pr-4">
-                    <p className="font-medium text-[#1E1E1E]">
+                    <p className="font-medium text-[#222222]">
                       {item.menuName} × {item.qty}
                     </p>
                     {optionLabel && (
                       <p className="text-xs text-[#727272] mt-0.5 truncate">{optionLabel}</p>
                     )}
                   </div>
-                  <p className="font-semibold text-[#1E1E1E] flex-shrink-0">
+                  <p className="font-semibold text-[#222222] flex-shrink-0">
                     {formatWon(item.subtotal)}
                   </p>
                 </div>
@@ -579,7 +657,7 @@ export default function CheckoutPage() {
 
         {/* 결제 내역 카드 */}
         <section className="bg-[#FAFAFA] rounded-xl p-4">
-          <h2 className="text-sm font-bold text-[#1E1E1E] mb-3">결제 내역</h2>
+          <h2 className="text-sm font-bold text-[#222222] mb-3">결제 내역</h2>
           <div className="space-y-2 text-sm">
             <div className="flex justify-between text-[#727272]">
               <span>메뉴 소계</span>
@@ -587,9 +665,9 @@ export default function CheckoutPage() {
             </div>
             <div className="flex justify-between text-[#727272]">
               <span>배달료</span>
-              <span>{method === '배달' ? formatWon(DELIVERY_FEE) : '해당없음'}</span>
+              <span>{method === '배달' ? formatWon(fee) : '해당없음'}</span>
             </div>
-            <div className="flex justify-between font-bold text-[#1E1E1E] pt-2 border-t border-[#D7D7D7]">
+            <div className="flex justify-between font-bold text-[#222222] pt-2 border-t border-[#D7D7D7]">
               <span>총 금액</span>
               <span>{formatWon(total)}</span>
             </div>
@@ -609,32 +687,26 @@ export default function CheckoutPage() {
             </div>
           </div>
 
-          {/* 잔액 부족 경고 */}
+          {/* 잔액 부족 안내 */}
           {isNegative && (
-            <div className="mt-3 px-3 py-2 bg-red-50 rounded-lg">
-              <p className="text-xs text-[#C92A2A] font-semibold">
-                ⚠️ 잔액이 부족합니다. 다음 충전 시 정산됩니다.
+            <div className="mt-3 px-3 py-2 bg-[#E6F4EC] rounded-lg">
+              <p className="text-xs text-[#017333] font-semibold">
+                다음 번엔 잔액을 충전해주세요 😊
               </p>
             </div>
           )}
         </section>
 
-        {/* 오류 메시지 */}
-        {error && (
-          <div className="px-4 py-3 bg-red-50 rounded-xl">
-            <p className="text-sm text-[#C92A2A] font-semibold">{error}</p>
-          </div>
-        )}
       </div>
 
       {/* 배달 요청사항 바텀 모달 */}
       {showDeliveryModal && (
         <>
           <div className="fixed inset-0 bg-black/40 z-40" onClick={closeDeliveryModal} />
-          <div className="fixed bottom-0 left-0 right-0 max-w-[430px] mx-auto bg-white rounded-t-2xl z-50">
+          <div className="fixed bottom-0 left-0 right-0 max-w-[430px] mx-auto bg-surface rounded-t-2xl z-50">
             {/* 모달 헤더 */}
             <div className="flex items-center justify-between px-5 pt-5 pb-4 border-b border-[#F0F0F0]">
-              <h3 className="text-[16px] font-bold text-[#1E1E1E]">배달 요청사항</h3>
+              <h3 className="text-[16px] font-bold text-[#222222]">배달 요청사항</h3>
               <button
                 onClick={closeDeliveryModal}
                 className="w-8 h-8 flex items-center justify-center text-[#727272] text-lg leading-none"
@@ -652,13 +724,13 @@ export default function CheckoutPage() {
                   onClick={() => setDraftOption(option)}
                 >
                   <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center flex-shrink-0 transition-colors ${
-                    draftOption === option ? 'border-[#1E1E1E]' : 'border-[#D7D7D7]'
+                    draftOption === option ? 'border-[#222222]' : 'border-[#D7D7D7]'
                   }`}>
                     {draftOption === option && (
-                      <div className="w-2.5 h-2.5 rounded-full bg-[#1E1E1E]" />
+                      <div className="w-2.5 h-2.5 rounded-full bg-[#222222]" />
                     )}
                   </div>
-                  <span className={`text-[14px] select-none ${draftOption === option ? 'font-semibold text-[#1E1E1E]' : 'text-[#727272]'}`}>
+                  <span className={`text-[14px] select-none ${draftOption === option ? 'font-semibold text-[#222222]' : 'text-[#727272]'}`}>
                     {option}
                   </span>
                 </label>
@@ -674,7 +746,7 @@ export default function CheckoutPage() {
                   onChange={e => setDraftCustomText(e.target.value)}
                   placeholder="배달 기사에게 자세하게 요청해주세요"
                   maxLength={20}
-                  className="w-full border border-[#D7D7D7] rounded-xl px-4 py-3 text-sm text-[#1E1E1E] placeholder:text-[#D7D7D7] outline-none focus:border-[#1E1E1E] transition-colors"
+                  className="w-full border border-[#D7D7D7] rounded-xl px-4 py-3 text-sm text-[#222222] placeholder:text-[#D7D7D7] outline-none focus:border-[#222222] transition-colors"
                 />
               </div>
             </div>
@@ -683,7 +755,7 @@ export default function CheckoutPage() {
             <div className="px-5 py-4 border-t border-[#F0F0F0]">
               <button
                 onClick={confirmDeliveryOption}
-                className="w-full py-4 bg-[#1E1E1E] text-white rounded-xl font-bold text-base active:scale-95 transition-transform"
+                className="w-full py-4 bg-[#222222] text-white rounded-xl font-bold text-base active:scale-95 transition-transform"
               >
                 완료
               </button>
@@ -693,14 +765,14 @@ export default function CheckoutPage() {
       )}
 
       {/* Footer */}
-      <footer className="flex-shrink-0 px-4 pt-3 pb-4 border-t border-[#D7D7D7] bg-white shadow-[0_-4px_20px_rgba(0,0,0,0.08)]">
+      <footer className="flex-shrink-0 px-4 pt-3 pb-4 border-t border-[#D7D7D7] bg-surface shadow-[0_-4px_20px_rgba(0,0,0,0.08)]">
         {/* 개인정보 수집 동의 */}
         {!isPersonal && (
           <label className="flex items-start gap-2.5 mb-3 cursor-pointer">
             <div
               onClick={() => setPrivacyAgreed(v => !v)}
               className={`w-5 h-5 rounded flex items-center justify-center flex-shrink-0 mt-0.5 border-2 transition-colors ${
-                privacyAgreed ? 'bg-[#1E1E1E] border-[#1E1E1E]' : 'border-[#D7D7D7]'
+                privacyAgreed ? 'bg-[#222222] border-[#222222]' : 'border-[#D7D7D7]'
               }`}
             >
               {privacyAgreed && <span className="text-white text-[11px] font-bold leading-none">✓</span>}
@@ -715,9 +787,9 @@ export default function CheckoutPage() {
         )}
         <button
           onClick={handleOrder}
-          disabled={isSubmitting || !method || (!isPersonal && (!ordererName.trim() || !isPhoneValid || !privacyAgreed)) || (method === '배달' && !baseAddress.trim())}
+          disabled={isSubmitting || !method || (!isPersonal && (!ordererName.trim() || !isPhoneValid || !privacyAgreed)) || (method === '배달' && (!baseAddress.trim() || deliveryCalculating || !!deliveryCalcError))}
           className={`w-full py-4 rounded-xl font-bold text-white text-base transition-colors ${
-            isSubmitting || !method || (!isPersonal && (!ordererName.trim() || !isPhoneValid || !privacyAgreed)) || (method === '배달' && !baseAddress.trim()) ? 'bg-[#CCC] cursor-not-allowed' : 'bg-[#1E1E1E] active:scale-95'
+            isSubmitting || !method || (!isPersonal && (!ordererName.trim() || !isPhoneValid || !privacyAgreed)) || (method === '배달' && (!baseAddress.trim() || deliveryCalculating || !!deliveryCalcError)) ? 'bg-[#CCC] cursor-not-allowed' : 'bg-[#222222] active:scale-95'
           }`}
         >
           {isSubmitting ? '주문 중...' : '주문하기'}
