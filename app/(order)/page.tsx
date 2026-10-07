@@ -96,13 +96,14 @@ function HomePageInner() {
     loadStoreName()
   }, [storeId, accountCode])
 
-  // 오류 토스트 — pinError 변경 시 3초 표시
+  // 오류 토스트 — pinError 변경 시 3초 표시. 잠김 상태는 해제될 때까지 계속 표시.
   useEffect(() => {
     if (!pinError) return
     setToastVisible(true)
     if (toastTimerRef.current) clearTimeout(toastTimerRef.current)
+    if (pinLocked) return
     toastTimerRef.current = setTimeout(() => setToastVisible(false), 3000)
-  }, [pinError])
+  }, [pinError, pinLocked])
 
   // 세션 초기화 + 거래처 고유 QR 처리 (?account=코드)
   useEffect(() => {
@@ -213,7 +214,7 @@ function HomePageInner() {
 
         if (newAttempts >= PIN_LOCK_LIMIT) {
           lockPin()
-          setPinError('')
+          setPinError('시도 횟수를 초과했어요. 잠시 후 다시 시도해 주세요.')
           track('pin_locked', { store_id: storeId ?? '' })
           ampTrack('pin_locked', { store_id: storeId ?? '' })
         } else {
@@ -291,20 +292,6 @@ function HomePageInner() {
         <h2 className="text-[18px] font-bold text-[#222222] mb-3">매장 QR 코드를 스캔해 주세요</h2>
         <p className="text-[14px] text-[#727272] leading-relaxed">
           매장에 부착된 QR 코드를 스캔하면<br />해당 매장의 선결제 주문 화면으로 이동합니다.
-        </p>
-      </div>
-    )
-  }
-
-  // ── 잠김 화면 ──
-  if (isLocked) {
-    return (
-      <div className="flex flex-col items-center justify-center min-h-screen px-8 text-center bg-surface">
-        <div className="text-5xl mb-6">🔒</div>
-        <h2 className="text-[18px] font-bold text-[#222222] mb-3">입력이 제한되었습니다</h2>
-        <p className="text-[14px] text-[#727272] leading-relaxed">
-          5회 오류로 입력이 제한되었습니다.<br />
-          QR 코드를 다시 스캔해 주세요.
         </p>
       </div>
     )
@@ -487,7 +474,8 @@ function HomePageInner() {
                 <button
                   key={idx}
                   onClick={() => handleNumpad('del')}
-                  className="h-[68px] rounded-2xl text-[22px] flex items-center justify-center select-none"
+                  disabled={isLocked}
+                  className="h-[68px] rounded-2xl text-[22px] flex items-center justify-center select-none disabled:opacity-40"
                   aria-label="지우기"
                 >
                   ⌫
@@ -498,7 +486,7 @@ function HomePageInner() {
               <button
                 key={idx}
                 onClick={() => handleNumpad(key)}
-                disabled={verifying}
+                disabled={verifying || isLocked}
                 className="h-[68px] rounded-2xl text-[22px] font-semibold text-[#222222] flex items-center justify-center select-none active:bg-[#F0F0F0] transition-colors disabled:opacity-40"
               >
                 {key}
