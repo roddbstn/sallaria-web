@@ -1,5 +1,6 @@
 import { initializeApp, getApps } from 'firebase/app'
 import { getAnalytics, logEvent, setUserId, type Analytics } from 'firebase/analytics'
+import { isAnalyticsEnabled } from './analytics-env'
 
 const firebaseConfig = {
   apiKey:            'AIzaSyClvk8-NJRk3-AJE2Ns_69vPic-bHMu0rI',
@@ -15,6 +16,8 @@ let analytics: Analytics | null = null
 
 export function getFirebaseAnalytics(): Analytics | null {
   if (typeof window === 'undefined') return null
+  // 개발 서버에선 아예 붙지 않는다 — 초기화만 해도 자동 수집이 따라붙는다
+  if (!isAnalyticsEnabled()) return null
   if (analytics) return analytics
   const app = getApps().length ? getApps()[0] : initializeApp(firebaseConfig)
   analytics = getAnalytics(app)

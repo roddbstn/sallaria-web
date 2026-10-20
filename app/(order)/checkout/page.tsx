@@ -6,9 +6,12 @@ import { useCartStore } from '@/lib/store/cart'
 import { useSessionStore } from '@/lib/store/session'
 import { formatWon, formatOptionsLabel, DELIVERY_FEE } from '@/lib/utils'
 import type { OrderMethod, OrderItemPayload } from '@/lib/types'
+import { PICKUP_OPTIONS, needsPickupTime, pickupSummary } from '@/lib/pickup-time'
 import { getSupabaseClient } from '@/lib/supabase/client'
 import { track, setGAUserId } from '@/lib/firebase'
 import { ampTrack } from '@/lib/amplitude'
+import { personProps } from '@/lib/person-key'
+import ScreenHeader from '@/components/ui/screen-header'
 
 declare global {
   interface Window {
@@ -28,10 +31,12 @@ const DELIVERY_REMARK_OPTIONS = [
   '직접 입력',
 ]
 
-const METHOD_OPTIONS: { value: OrderMethod; label: string; emoji: string; extra?: string }[] = [
-  { value: '포장', label: '포장', emoji: '🛍️' },
-  { value: '내점', label: '매장 식사', emoji: '🍽️' },
-  { value: '배달', label: '배달', emoji: '🛵', extra: `+${formatWon(DELIVERY_FEE)}~` },
+// 이모지를 뺐다. 세 칸에 서로 다른 그림이 들어가면 눈이 그림을 먼저 보고 글자를 다시 읽는다 —
+// 고를 게 셋뿐이라 글자만으로 충분하고, 선택 상태(초록)가 훨씬 또렷해진다.
+const METHOD_OPTIONS: { value: OrderMethod; label: string; extra?: string }[] = [
+  { value: '포장', label: '포장' },
+  { value: '내점', label: '매장 식사' },
+  { value: '배달', label: '배달', extra: `+${formatWon(DELIVERY_FEE)}~` },
 ]
 
 export default function CheckoutPage() {
@@ -52,6 +57,8 @@ export default function CheckoutPage() {
     setDeliveryCalculation,
   } = useCartStore()
   const { account, setAccount, setOrderer, setPhone } = useSessionStore()
+  const sessionOrderer = useSessionStore(s => s.orderer)
+  const sessionPhone   = useSessionStore(s => s.phone)
 
   const [ordererName, setOrdererName] = useState('')
   const [phoneNumber, setPhoneNumber] = useState('')
@@ -62,13 +69,36 @@ export default function CheckoutPage() {
   const [draftOption, setDraftOption] = useState(DEFAULT_DELIVERY_REMARK)
   const [draftCustomText, setDraftCustomText] = useState('')
   const [isSubmitting, setIsSubmitting] = useState(false)
-  const [privacyAgreed, setPrivacyAgreed] = useState(false)
+  // 기본 체크. 점주 요청 — 매번 같은 사람이 같은 동의를 다시 누르는 게 번거롭다는 피드백.
+  // (참고: 개인정보보호법은 사전 동의를 원칙으로 해서, 미리 체크된 동의는 다툼의 소지가 있다.
+  //  해제는 여전히 가능하고, 해제하면 주문 버튼이 잠긴다.)
+  const [privacyAgreed, setPrivacyAgreed] = useState(true)
   const [deliveryCalculating, setDeliveryCalculating] = useState(false)
   const [deliveryCalcError,  setDeliveryCalcError]  = useState('')
+  // 예상 수령시간 — 포장/내점 필수. null = 아직 안 고름
+  const [pickupMinutes, setPickupMinutes] = useState<number | null>(null)
 
   // 이전 주문자 자동완성 칩
   const [members, setMembers] = useState<{ id: string; name: string; phone: string | null; order_count: number }[]>([])
   const [selectedMemberId, setSelectedMemberId] = useState<string | null>(null)
+
+  // ── 입구에서 이미 주문자를 고른 경우 ──────────────────────────────────────
+  //
+  // QR 찍고 명단에서 이름을 고르면 세션에 주문자·전화번호가 들어 있다(루트 화면 참고).
+  // 그럼 여기서 또 물을 이유가 없다. 입력칸 두 개를 접고 "이 사람 맞죠?" 한 줄로 바꾼다.
+  // 틀렸으면 '변경'으로 열어서 직접 적을 수 있게 둔다 — 접어놓고 못 고치면 막힌 길이 된다.
+  const [prefilled, setPrefilled] = useState(false)
+  useEffect(() => {
+    if (prefilled) return
+    // ⚠️ 번호(sessionPhone)까지 있어야 채우도록 했다가, 번호를 못 받아온 경우 이름까지
+    //    비어 보이는 버그가 있었다. 입구에서 고른 사람이 있으면 **이름은 무조건** 채운다.
+    if (!sessionOrderer) return
+    setOrdererName(sessionOrderer)
+    if (sessionPhone) setPhoneNumber(sessionPhone)
+    // 번호가 없으면 접지 않는다 — 입력칸을 펼쳐서 번호만 받아야 하니까
+    if (sessionPhone) setPrefilled(true)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sessionOrderer, sessionPhone])
 
   // 이전 주문자 목록 로드 (과/기업 거래처만)
   useEffect(() => {
@@ -151,7 +181,9 @@ export default function CheckoutPage() {
     return `${digits.slice(0,3)}-****-${digits.slice(-4)}`
   }
 
-  // 칩 선택 시 입력 필드는 마스킹 표시 — 실제 번호는 members 배열에서 직접 참조
+  // 칩 선택 시 입력 필드는 마스킹 표시 — 실제 번호는 members 배열에서 직접 참조.
+  // prefilled 는 마스킹하지 않고 **실제 번호**를 state 에 넣으므로 아래 11자리 검사를 그대로 탄다
+  // (화면에만 마스킹해서 보여준다).
   const isPhoneValid = selectedMemberId
     ? !!members.find(m => m.id === selectedMemberId)?.phone
     : phoneNumber.replace(/\D/g, '').length === 11
@@ -208,10 +240,24 @@ export default function CheckoutPage() {
   const afterBalance = currentBalance - total
   const isNegative = afterBalance < 0
 
+  // 포장/내점은 수령시간을 골라야 주문 가능. 배달은 주소가 그 역할을 하고 도착시간이 거리에 달려 있다
+  const pickupRequired = needsPickupTime(method)
+  const pickupMissing  = pickupRequired && pickupMinutes === null
+
+  // 주문 버튼 차단 조건 — disabled 와 className 두 곳에 똑같이 적었던 긴 식을 한 군데로 모았다.
+  // 조건이 늘 때마다 두 곳을 같이 고쳐야 했고, 한쪽만 고치면 "눌리는데 아무 일도 안 나는" 버튼이 된다.
+  const orderBlocked =
+    isSubmitting ||
+    !method ||
+    (!isPersonal && (!ordererName.trim() || !isPhoneValid || !privacyAgreed)) ||
+    (method === '배달' && (!baseAddress.trim() || deliveryCalculating || !!deliveryCalcError)) ||
+    pickupMissing
+
   async function handleOrder() {
     if (!account || !method || items.length === 0) return
     if (!isPersonal && (!ordererName.trim() || !isPhoneValid)) return
     if (method === '배달' && (!baseAddress.trim() || deliveryCalculating || deliveryCalcError)) return
+    if (pickupMissing) return
     setIsSubmitting(true)
 
     const finalOrderer = isPersonal ? account.name : ordererName.trim()
@@ -234,6 +280,8 @@ export default function CheckoutPage() {
       option_item_ids: item.selectedOptions.map((o) => o.optionId),
       option_names:    item.selectedOptions.map((o) => o.optionName),
       option_prices:   item.selectedOptions.map((o) => o.plus),
+      // 옵션별 수량 — 서버(create_order)가 option_items.max_quantity로 다시 clamp한다
+      option_quantities: item.selectedOptions.map((o) => o.qty ?? 1),
     }))
 
     const rpcNote = (() => {
@@ -258,6 +306,7 @@ export default function CheckoutPage() {
     sessionStorage.setItem('last_order_code',           tempCode)
     sessionStorage.setItem('last_order_number',         '')   // RPC 완료 후 업데이트
     sessionStorage.setItem('last_order_method',         method!)
+    sessionStorage.setItem('last_order_pickup_minutes', pickupRequired && pickupMinutes !== null ? String(pickupMinutes) : '')
     sessionStorage.setItem('last_order_delivery_fee',   String(fee))
     sessionStorage.setItem('last_order_delivery_distance_m', deliveryDistanceM != null ? String(deliveryDistanceM) : '')
     sessionStorage.setItem('last_order_total',          String(total))
@@ -327,6 +376,8 @@ export default function CheckoutPage() {
           p_items:         payload,
           p_delivery_fee:  fee,
           p_note:          rpcNote,
+          // 배달은 null — 도착시간이 거리에 달려 있어 고객이 고를 값이 아니다
+          p_requested_pickup_minutes: pickupRequired ? pickupMinutes : null,
           ...(method === '배달' ? {
             p_delivery_road_address:   baseAddress.trim() || null,
             p_delivery_detail_address: detailAddress.trim() || null,
@@ -423,19 +474,7 @@ export default function CheckoutPage() {
 
   return (
     <div className="screen">
-      {/* Header */}
-      <header className="flex items-center h-14 px-5 border-b border-[#D7D7D7] flex-shrink-0">
-        <button
-          onClick={() => router.back()}
-          className="-ml-3 p-3 rounded-full hover:bg-[#F5F5F5] transition-colors"
-          aria-label="뒤로가기"
-        >
-          <svg width="9" height="15" viewBox="0 0 9 15" fill="none"><path d="M8 1L1 7.5L8 14" stroke="#222222" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></svg>
-        </button>
-        <h1 className="flex-1 text-center text-base font-bold text-[#222222] pr-9">
-          주문 확인
-        </h1>
-      </header>
+      <ScreenHeader title="주문 확인" onBack={() => router.back()} />
 
       {/* 데모 모드 배너 */}
       {account?.isDemo && (
@@ -445,11 +484,33 @@ export default function CheckoutPage() {
       )}
 
       {/* Body */}
-      <div className="flex-1 overflow-y-auto px-4 py-4 space-y-5">
+      <div className="flex-1 overflow-y-auto px-4 pt-5 pb-6 space-y-9">
         {/* 거래처 + 주문자 입력 */}
         <section className="space-y-3">
           <p className="text-base font-bold text-[#222222]">{account?.name}</p>
-          {!isPersonal && (
+          {/* 입구에서 고른 주문자 — 확인 한 줄로 끝낸다 */}
+          {!isPersonal && prefilled && (
+            <div className="flex items-center justify-between gap-3 px-4 py-3 rounded-xl bg-[#F5F5F5]">
+              <div className="min-w-0">
+                <p className="text-[14px] font-semibold text-[#222222] truncate">{ordererName}</p>
+                <p className="text-[12px] text-[#727272] tabular-nums">{maskPhone(phoneNumber)}</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setPrefilled(false)
+                  setPhoneNumber('')
+                  setSelectedMemberId(null)
+                  track('orderer_edit', { account_code: account?.code ?? '' })
+                  ampTrack('orderer_edit', { account_code: account?.code ?? '' })
+                }}
+                className="flex-shrink-0 text-[13px] text-[#727272] underline underline-offset-2"
+              >
+                변경
+              </button>
+            </div>
+          )}
+          {!isPersonal && !prefilled && (
             <>
               {/* 이전 주문자 칩 */}
               {members.length > 0 && (
@@ -513,33 +574,88 @@ export default function CheckoutPage() {
 
         {/* 이용방법 선택 */}
         <section>
-          <h2 className="text-sm font-bold text-[#222222] mb-2">이용방법</h2>
+          <h2 className="text-base font-bold text-[#222222] mb-3">이용방법 <span className="text-[#C92A2A]">*</span></h2>
           <div className="flex gap-2">
             {METHOD_OPTIONS.map((opt) => (
               <button
                 key={opt.value}
                 onClick={() => { track('method_select', { method: opt.value }); ampTrack('method_select', { method: opt.value }); setMethod(opt.value) }}
-                className={`flex-1 py-3 rounded-xl text-sm font-medium transition-colors ${
+                className={`flex-1 h-[56px] rounded-xl text-[14px] font-medium transition-colors flex flex-col items-center justify-center gap-0.5 ${
                   method === opt.value
                     ? 'bg-[#E6F4EC] text-[#017333]'
                     : 'bg-[#F5F5F5] text-[#222222]'
                 }`}
               >
-                <span className="block text-base">{opt.emoji}</span>
-                <span className="block mt-0.5">{opt.label}</span>
+                <span>{opt.label}</span>
                 {opt.extra && (
-                  <span className="block text-xs mt-0.5 opacity-75">{opt.extra}</span>
+                  <span className="text-[12px] text-[#727272]">{opt.extra}</span>
                 )}
               </button>
             ))}
           </div>
         </section>
 
+        {/* 예상 수령시간 (포장/내점 선택 시에만 — 배달은 아래 주소 입력이 이 자리를 쓴다) */}
+        {pickupRequired && (
+          <section>
+            <h2 className="text-base font-bold text-[#222222] mb-3">
+              예상 수령시간 <span className="text-[#C92A2A]">*</span>
+            </h2>
+            <div className="grid grid-cols-4 gap-2">
+              {PICKUP_OPTIONS.map((opt) => {
+                const active = pickupMinutes === opt.minutes
+                return (
+                  <button
+                    key={opt.minutes}
+                    type="button"
+                    disabled={opt.disabled}
+                    onClick={() => {
+                      // 몇 분을 고르는지 — 주방 소요시간을 실제 수요에 맞추는 근거가 된다
+                      const pt = { minutes: opt.minutes, ...personProps(sessionOrderer || ordererName) }
+                      track('pickup_time_select', pt)
+                      ampTrack('pickup_time_select', pt)
+                      setPickupMinutes(opt.minutes)
+                    }}
+                    className={`py-2.5 rounded-xl text-[13px] font-light transition-colors ${
+                      opt.disabled
+                        ? 'bg-[#FAFAFA] text-[#D7D7D7] cursor-not-allowed'
+                        : active
+                        ? 'bg-[#E6F4EC] text-[#017333]'
+                        : 'bg-[#F5F5F5] text-[#414141] active:scale-95'
+                    }`}
+                  >
+                    {opt.label}
+                  </button>
+                )
+              })}
+            </div>
+            {/* 선택 결과 — 맨 초록 글자 대신 카드로 묶어 "확정된 값"처럼 보이게.
+                칩('+10분')을 되읊지 않고 받을 시각을 머리말로 올린다 */}
+            {pickupMinutes !== null && (() => {
+              const { headline } = pickupSummary(pickupMinutes)
+              return (
+                <div className="mt-3 flex items-center gap-2.5 rounded-xl bg-[#E6F4EC] px-3.5 py-3">
+                  <svg width="18" height="18" viewBox="0 0 20 20" fill="none" className="flex-shrink-0">
+                    <circle cx="10" cy="10" r="7.6" stroke="#017333" strokeWidth="1.5" />
+                    <path d="M10 6.2V10L12.4 11.6" stroke="#017333" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+                  </svg>
+                  <div className="min-w-0">
+                    <p className="text-[13px] font-bold text-[#017333] leading-tight">{headline}</p>
+                  </div>
+                </div>
+              )
+            })()}
+            <p className="mt-2.5 text-[11px] text-[#ADADAD] leading-relaxed">
+              1시간 이상 걸리신다면 아래 가게 요청사항에 적어주세요
+            </p>
+          </section>
+        )}
+
         {/* 배달 주소 + 배달 요청사항 (배달 선택 시에만) */}
         {method === '배달' && (
           <section className="space-y-3">
             <div>
-              <label className="text-sm font-bold text-[#222222] mb-2 block">
+              <label className="text-base font-bold text-[#222222] mb-3 block">
                 배달 주소 <span className="text-[#C92A2A]">*</span>
               </label>
               {/* 도로명 주소 검색 */}
@@ -582,7 +698,7 @@ export default function CheckoutPage() {
               )}
             </div>
             <div>
-              <label className="text-sm font-bold text-[#222222] mb-2 block">배달 요청사항</label>
+              <label className="text-base font-bold text-[#222222] mb-3 block">배달 요청사항</label>
               <button
                 type="button"
                 onClick={openDeliveryModal}
@@ -599,20 +715,20 @@ export default function CheckoutPage() {
 
         {/* 가게 요청사항 */}
         <section>
-          <h2 className="text-sm font-bold text-[#222222] mb-2">가게 요청사항</h2>
+          <h2 className="text-base font-bold text-[#222222] mb-3">가게 요청사항</h2>
           {/* 퀵 선택 버튼 */}
-          <div className="flex flex-wrap gap-2 mb-2">
-            {['수저·포크 O', '수저·포크 X', '소스 따로', '덜 맵게', '견과류 제외'].map((label) => {
+          <div className="flex flex-wrap gap-2 mb-3.5">
+            {['수저·포크 O', '수저·포크 X', '소스 따로', '덜 맵게'].map((label) => {
               const active = remarks.includes(label)
               return (
                 <button
                   key={label}
                   type="button"
                   onClick={() => { track('quick_tag_click', { tag: label, active: !remarks.includes(label) }); ampTrack('quick_tag_click', { tag: label, active: !remarks.includes(label) }); handleTag(label) }}
-                  className={`px-3 py-1.5 rounded-full text-[13px] font-semibold transition-colors ${
+                  className={`px-3 py-1.5 rounded-full text-[13px] font-light transition-colors ${
                     active
                       ? 'bg-[#E6F4EC] text-[#017333]'
-                      : 'bg-[#F5F5F5] text-[#727272]'
+                      : 'bg-[#F5F5F5] text-[#414141]'
                   }`}
                 >
                   {label}
@@ -630,14 +746,15 @@ export default function CheckoutPage() {
           />
         </section>
 
-        {/* 주문 메뉴 목록 */}
-        <section>
-          <h2 className="text-sm font-bold text-[#222222] mb-2">주문 메뉴</h2>
-          <div className="space-y-2">
+        {/* 주문 내역 — 메뉴 줄과 금액 줄을 한 박스에.
+            제목('주문 메뉴')은 뺐다. 메뉴명과 금액이 나란히 있으면 무슨 목록인지
+            따로 말해줄 필요가 없고, 제목이 있으면 아래 금액 줄과 층이 갈려 보인다. */}
+        <section className="bg-[#FAFAFA] rounded-xl p-4">
+          <div className="space-y-2.5 text-sm">
             {items.map((item) => {
               const optionLabel = formatOptionsLabel(item.selectedOptions)
               return (
-                <div key={item.cartId} className="flex justify-between text-sm">
+                <div key={item.cartId} className="flex justify-between">
                   <div className="flex-1 min-w-0 pr-4">
                     <p className="font-medium text-[#222222]">
                       {item.menuName} × {item.qty}
@@ -652,24 +769,19 @@ export default function CheckoutPage() {
                 </div>
               )
             })}
-          </div>
-        </section>
 
-        {/* 결제 내역 카드 */}
-        <section className="bg-[#FAFAFA] rounded-xl p-4">
-          <h2 className="text-sm font-bold text-[#222222] mb-3">결제 내역</h2>
-          <div className="space-y-2 text-sm">
-            <div className="flex justify-between text-[#727272]">
-              <span>메뉴 소계</span>
-              <span>{formatWon(subtotal)}</span>
-            </div>
-            <div className="flex justify-between text-[#727272]">
-              <span>배달료</span>
-              <span>{method === '배달' ? formatWon(fee) : '해당없음'}</span>
-            </div>
-            <div className="flex justify-between font-bold text-[#222222] pt-2 border-t border-[#D7D7D7]">
+            {method === '배달' && fee > 0 && (
+              <div className="flex justify-between">
+                <p className="font-medium text-[#222222]">배달료</p>
+                <p className="font-semibold text-[#222222] flex-shrink-0">{formatWon(fee)}</p>
+              </div>
+            )}
+          </div>
+
+          <div className="mt-3 pt-3 border-t border-[#D7D7D7] text-sm">
+            <div className="flex justify-between font-bold text-[#222222]">
               <span>총 금액</span>
-              <span>{formatWon(total)}</span>
+              <span className="font-extrabold">{formatWon(total)}</span>
             </div>
           </div>
 
@@ -679,9 +791,9 @@ export default function CheckoutPage() {
               <span>선결제 잔액</span>
               <span>{formatWon(currentBalance)}</span>
             </div>
-            <div className="flex justify-between font-semibold">
-              <span className="text-[#727272]">주문 후 잔액</span>
-              <span className={isNegative ? 'text-[#C92A2A]' : 'text-[#017333]'}>
+            <div className="flex justify-between">
+              <span className="font-medium text-[#727272]">주문 후 잔액</span>
+              <span className={`font-semibold ${isNegative ? 'text-[#C92A2A]' : 'text-[#1E1E1E]'}`}>
                 {formatWon(afterBalance)}
               </span>
             </div>
@@ -699,11 +811,13 @@ export default function CheckoutPage() {
 
       </div>
 
-      {/* 배달 요청사항 바텀 모달 */}
+      {/* 배달 요청사항 바텀 시트 — 주문자 시트(orderer-sheet)와 같은 모션을 쓴다.
+          전엔 애니메이션 없이 툭 나타났다. 같은 화면에서 올라오는 두 시트가 서로 다르게
+          움직이면 둘 중 하나는 "잘못 뜬 것"처럼 보인다. */}
       {showDeliveryModal && (
         <>
-          <div className="fixed inset-0 bg-black/40 z-40" onClick={closeDeliveryModal} />
-          <div className="fixed bottom-0 left-0 right-0 max-w-[430px] mx-auto bg-surface rounded-t-2xl z-50">
+          <div className="fixed inset-0 bg-black/45 z-40 backdrop-in" onClick={closeDeliveryModal} />
+          <div className="fixed bottom-0 left-0 right-0 max-w-[430px] mx-auto bg-surface rounded-t-[24px] z-50 sheet-in">
             {/* 모달 헤더 */}
             <div className="flex items-center justify-between px-5 pt-5 pb-4 border-b border-[#F0F0F0]">
               <h3 className="text-[16px] font-bold text-[#222222]">배달 요청사항</h3>
@@ -779,7 +893,13 @@ export default function CheckoutPage() {
             </div>
             <span className="text-[12px] text-[#727272] leading-relaxed">
               주문자 이름·전화번호 수집에 동의합니다.{' '}
-              <a href="/privacy" className="underline text-[#017333]" onClick={e => e.stopPropagation()}>
+              {/* 메뉴 화면의 '변경'·'주문자 선택'과 같은 칩. 본문 속 밑줄 링크는
+                  글자 크기가 12px 이라 손가락으로 겨냥하기 어려웠다. */}
+              <a
+                href="/privacy"
+                onClick={e => e.stopPropagation()}
+                className="inline-block align-middle ml-0.5 px-2.5 py-1 rounded-lg bg-[#EDEDED] text-[12px] font-normal text-[#222222] no-underline active:bg-[#E0E0E0] transition-colors"
+              >
                 개인정보처리방침
               </a>
             </span>
@@ -787,15 +907,15 @@ export default function CheckoutPage() {
         )}
         <button
           onClick={handleOrder}
-          disabled={isSubmitting || !method || (!isPersonal && (!ordererName.trim() || !isPhoneValid || !privacyAgreed)) || (method === '배달' && (!baseAddress.trim() || deliveryCalculating || !!deliveryCalcError))}
+          disabled={orderBlocked}
           className={`w-full py-4 rounded-xl font-bold text-white text-base transition-colors ${
-            isSubmitting || !method || (!isPersonal && (!ordererName.trim() || !isPhoneValid || !privacyAgreed)) || (method === '배달' && (!baseAddress.trim() || deliveryCalculating || !!deliveryCalcError)) ? 'bg-[#CCC] cursor-not-allowed' : 'bg-[#222222] active:scale-95'
+            orderBlocked ? 'bg-[#CCC] cursor-not-allowed' : 'bg-[#222222] active:scale-95'
           }`}
         >
           {isSubmitting ? '주문 중...' : '주문하기'}
         </button>
         <p className="text-center text-xs text-[#727272] mt-2">
-          ⚠️ 주문 취소는 어려워요. 신중하게 확인해주세요.
+          주문 취소는 어려워요. 신중하게 확인해주세요.
         </p>
       </footer>
     </div>

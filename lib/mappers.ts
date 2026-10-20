@@ -21,6 +21,7 @@ export function mapDbMenu(row: any): Menu {
             name:      it.name,
             plus:      it.extra_price,
             isSoldOut: it.is_sold_out,
+            maxQty:    it.max_quantity ?? null,
           })),
       }
     })

@@ -20,7 +20,8 @@ export default function MenuCard({ menu, onClick }: MenuCardProps) {
       }}
       className={[
         'flex flex-row-reverse gap-[14px] py-[14px] px-2 -mx-2 rounded-xl cursor-pointer',
-        'transition-colors hover:bg-gray-bg active:bg-gray-bg',
+        'transition-[background-color,transform] duration-150 hover:bg-gray-bg active:bg-gray-bg',
+        'active:scale-[0.97]',
         isSoldOut ? 'pointer-events-none opacity-50' : '',
       ].join(' ')}
     >

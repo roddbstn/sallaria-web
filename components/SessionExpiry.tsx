@@ -4,7 +4,10 @@ import { useEffect } from 'react'
 import { useRouter, usePathname } from 'next/navigation'
 import { useSessionStore } from '@/lib/store/session'
 
-const SESSION_MS = 5 * 60 * 1000  // 5분
+// 10분. 5분은 가혹했다 — 메뉴가 160개가 넘는 매장이라 처음 오는 손님은
+// 훑어보다가 그냥 쫓겨났다. 장바구니·주문확인 단계는 애초에 면제라
+// 이 시간은 '메뉴를 고르는 시간'만 센다.
+const SESSION_MS = 10 * 60 * 1000  // 10분
 
 // 주문 흐름 중에는 만료 체크 제외
 const EXEMPT_PATHS = ['/cart', '/checkout', '/success']

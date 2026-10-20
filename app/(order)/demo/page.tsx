@@ -1,12 +1,24 @@
 'use client'
 
-import { useEffect, useState } from 'react'
-import { useRouter } from 'next/navigation'
+import { Suspense, useEffect, useState } from 'react'
+import { useRouter, useSearchParams } from 'next/navigation'
 import { useSessionStore } from '@/lib/store/session'
 import { getSupabaseClient } from '@/lib/supabase/client'
 
+/** 공개 데모 링크(sallaria.web.app/demo)가 보여줄 대표 매장 — 샐러리아 침산점 */
+const DEMO_STORE_ID = 'c4645a2a-06b2-4a1f-bb1e-32ae0a741db6'
+
 export default function DemoPage() {
+  return (
+    <Suspense>
+      <DemoPageInner />
+    </Suspense>
+  )
+}
+
+function DemoPageInner() {
   const router = useRouter()
+  const searchParams = useSearchParams()
   const { setAccount, setLoginAt, setOrderer, setPhone } = useSessionStore()
   const [error, setError] = useState<string | null>(null)
 
@@ -14,12 +26,16 @@ export default function DemoPage() {
     async function init() {
       const supabase = getSupabaseClient()
 
-      // 실제 매장 ID 조회 — 첫 번째 활성 매장 사용
+      // sunpos(POS 앱)의 메뉴 화면 QR오더 미리보기 iframe은 ?store=<storeId>로 자기 매장을 넘겨준다.
+      // 그 경우엔 반드시 넘어온 매장을 쓴다 — 예전처럼 이름으로 "침산"을 찾는 하드코딩이면
+      // 어떤 계정으로 접속하든 침산점만 떠서 조용히 엉뚱한 매장을 보여주게 된다.
+      // 파라미터가 없는 맨 /demo 는 공유용 공개 데모 링크라, 대표 매장을 명시적으로 고정한다.
+      const storeIdParam = searchParams.get('store') ?? DEMO_STORE_ID
+
       const { data, error: dbErr } = await supabase
         .from('stores')
         .select('id, name')
-        .ilike('name', '%침산%')
-        .limit(1)
+        .eq('id', storeIdParam)
         .maybeSingle()
 
       if (dbErr || !data) {

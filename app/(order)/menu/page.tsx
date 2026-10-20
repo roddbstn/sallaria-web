@@ -3,18 +3,22 @@
 import { useState, useEffect, useRef, useCallback, Suspense, useMemo } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { useSessionStore } from '@/lib/store/session'
+import RecentMenus from '@/components/menu/recent-menus'
+import OrdererSheet from '@/components/order/orderer-sheet'
 import { useCartStore } from '@/lib/store/cart'
 import { getSupabaseClient } from '@/lib/supabase/client'
-import { formatWon, isLowBalance } from '@/lib/utils'
+import { formatWon, isLowBalance, isNegativeBalance } from '@/lib/utils'
 import MenuCard from '@/components/menu/menu-card'
 import { track } from '@/lib/firebase'
 import { ampTrack } from '@/lib/amplitude'
+import { personProps } from '@/lib/person-key'
 import MenuDetailClient from './[code]/menu-detail-client'
 import type { Category, Menu } from '@/lib/types'
 import type { RealtimeChannel } from '@supabase/supabase-js'
 import { mapDbMenu } from '@/lib/mappers'
 import NoticeModal from '@/components/notice/notice-modal'
 import { DELIVERY_FEE_NOTICE_ID, isNoticeDismissed, dismissNotice } from '@/lib/notice'
+import LoadingTimer from '@/components/ui/loading-timer'
 
 export default function MenuPage() {
   return (
@@ -30,6 +34,9 @@ function MenuPageInner() {
   const selectedItemCode = searchParams.get('item')
   const account = useSessionStore(s => s.account)
   const orderer = useSessionStore(s => s.orderer)
+  const setOrderer = useSessionStore(s => s.setOrderer)
+  const setPhone   = useSessionStore(s => s.setPhone)
+  const [ordererSheet, setOrdererSheet] = useState(false)
   const cartItems = useCartStore(s => s.items)
 
   const [categories, setCategories] = useState<Category[]>([])
@@ -81,12 +88,13 @@ function MenuPageInner() {
     return () => unsub()
   }, [])
 
-  // 공지 팝업 — PIN 세션과 무관하게, 매장별로 "다시 보지 않기" 여부 확인
+  // 공지 팝업 — PIN 세션과 무관하게, 매장별로 "다시 보지 않기" 여부 확인.
+  // 데모 세션(sunpos QR오더 미리보기 iframe)에서는 실제 손님이 아니므로 공지를 띄우지 않는다.
   const [showNotice, setShowNotice] = useState(false)
   useEffect(() => {
-    if (!account?.storeId) return
+    if (!account?.storeId || account.isDemo) return
     if (!isNoticeDismissed(DELIVERY_FEE_NOTICE_ID, account.storeId)) setShowNotice(true)
-  }, [account?.storeId])
+  }, [account?.storeId, account?.isDemo])
 
   // 잔액 실시간 구독 (Supabase Realtime)
   const setAccount = useSessionStore(s => s.setAccount)
@@ -164,7 +172,7 @@ function MenuPageInner() {
               display_order,
               option_groups (
                 id, name, is_required, is_multi, max_select, is_sold_out, is_hidden,
-                option_items ( id, name, extra_price, is_sold_out, is_hidden, display_order )
+                option_items ( id, name, extra_price, is_sold_out, is_hidden, display_order, max_quantity )
               )
             )
           `)
@@ -309,6 +317,15 @@ function MenuPageInner() {
     setTimeout(() => { searchIsScrolling.current = false }, 800)
   }, [])
 
+  // sunpos(점주용 데스크톱 앱)가 이 페이지를 QR오더 미리보기 iframe으로 띄웠을 때만 부모 창이
+  // 존재함 — 손님이 QR코드를 찍거나 링크로 직접 열면 최상위 탭이라 window.parent === window라서
+  // 아무 효과도 없음. targetOrigin을 '*'로 둔 건 sunpos 쪽 origin을 미리 알 수 없어서이고,
+  // 보내는 내용이 카테고리 id 하나뿐이라 민감정보 유출 우려는 없음(수신측에서 발신 origin 검증함).
+  const notifySunposCategoryChange = useCallback((catId: string) => {
+    if (typeof window === 'undefined' || window.parent === window) return
+    window.parent.postMessage({ type: 'SUNPOS_CATEGORY_CHANGED', categoryId: catId }, '*')
+  }, [])
+
   const scrollToCategory = useCallback((catId: string, source: 'tab' | 'dropdown' = 'tab') => {
     const el = sectionRefs.current[catId]
     const container = scrollRef.current
@@ -320,6 +337,7 @@ function MenuPageInner() {
     isScrollingToRef.current = true
     setActiveCategory(catId)
     setShowDropdown(false)
+    notifySunposCategoryChange(catId)
 
     // 탭바 하단 기준으로 스크롤 위치 계산 — 구분선 top이 탭바 bottom에 정확히 닿도록
     const tabsBottom = tabsRef.current?.getBoundingClientRect().bottom ?? 60
@@ -327,6 +345,28 @@ function MenuPageInner() {
     const scrollTop = container.scrollTop + (elTop - tabsBottom)
     container.scrollTo({ top: scrollTop, behavior: 'smooth' })
     setTimeout(() => { isScrollingToRef.current = false }, 800)
+  }, [notifySunposCategoryChange])
+
+  // sunpos 부모 창에서 왼쪽 카테고리를 클릭하면 이 iframe도 그 카테고리로 스크롤 — 반대 방향 동기화.
+  // 일반 탭/링크로 열린 경우엔 메시지를 보낼 부모가 없으므로 이 리스너가 등록돼 있어도 아무 일도
+  // 일어나지 않는다(이 페이지가 iframe 안에 있을 때만 의미 있는 메시지가 도착함).
+  useEffect(() => {
+    function onMessage(e: MessageEvent) {
+      if (e.data?.type !== 'SUNPOS_SELECT_CATEGORY') return
+      const catId = e.data.categoryId as string | null
+      if (!catId) return
+      const el = sectionRefs.current[catId]
+      const container = scrollRef.current
+      if (!el || !container) return
+      isScrollingToRef.current = true
+      setActiveCategory(catId)
+      const tabsBottom = tabsRef.current?.getBoundingClientRect().bottom ?? 60
+      const elTop = el.getBoundingClientRect().top
+      container.scrollTo({ top: container.scrollTop + (elTop - tabsBottom), behavior: 'smooth' })
+      setTimeout(() => { isScrollingToRef.current = false }, 800)
+    }
+    window.addEventListener('message', onMessage)
+    return () => window.removeEventListener('message', onMessage)
   }, [])
 
   const menusByCat = useCallback((catId: string) => {
@@ -357,8 +397,7 @@ function MenuPageInner() {
   if (loading) {
     return (
       <div className="flex flex-col items-center justify-center min-h-screen bg-surface">
-        <div className="w-8 h-8 border-4 border-green border-t-transparent rounded-full animate-spin mb-3" />
-        <p className="text-[14px] text-gray-text">메뉴를 불러오는 중...</p>
+        <LoadingTimer size={44} />
       </div>
     )
   }
@@ -398,22 +437,56 @@ function MenuPageInner() {
 
         {/* 헤더 (스크롤 시 사라짐) */}
         <div className="bg-surface pt-14 px-6 pb-0">
-          <h1 className="text-[26px] font-bold text-ink">{account.storeName ?? ''}</h1>
+          {/* 매장명과 주문자를 **같은 윗변**에 세운다.
+              주문자를 아래 회색 박스 안에 넣었더니 거래처·잔액과 같은 무게로 읽혀서,
+              "바꿀 수 있는 것"이라는 게 안 보였다. 박스 밖 우상단이 그 자리다. */}
+          <div className="flex items-start justify-between gap-3">
+            <h1 className="text-[26px] font-bold text-ink min-w-0 truncate">{account.storeName ?? ''}</h1>
+            {account.type !== '개인' && (
+              <div className="flex-shrink-0 flex items-center gap-1.5">
+                {orderer && (
+                  <span className="text-[13px] text-[#222222] font-medium max-w-[120px] truncate">{orderer}</span>
+                )}
+                <button
+                  onClick={() => {
+                    track('orderer_change_open', { account_code: account.code })
+                    ampTrack('orderer_change_open', { account_code: account.code })
+                    setOrdererSheet(true)
+                  }}
+                  className="px-2.5 py-1 rounded-lg bg-[#EDEDED] text-[13px] font-normal text-[#222222] active:bg-[#E0E0E0] transition-colors"
+                >
+                  {orderer ? '변경' : '주문자 선택'}
+                </button>
+              </div>
+            )}
+          </div>
 
-          <div className="mt-3 mb-4 bg-gray-50 rounded-xl px-4 py-3 flex items-center justify-between">
-            <span className="text-[13px] text-gray-text">
-              <span className="text-[15px] font-semibold text-ink">{account.name}</span>
-              {orderer && <span className="ml-1 text-gray-text">· {orderer}</span>}
-            </span>
-            <div className="text-right">
-              <div className="text-[13px] text-gray-text">선결제 잔액</div>
-              <div className={[
-                'text-[16px] font-bold',
-                isLowBalance(account.balance) ? 'text-danger' : 'text-ink',
-              ].join(' ')}>
-                {formatWon(account.balance)}
+          {/* 잔액이 음수면 이 박스를 아래로 늘려 경고를 **상시** 붙인다.
+              토스트나 모달로 띄웠다가 닫히면 그만인 안내와 다르다 — 잔액이 마이너스인 동안
+              주문할 때마다 보여야 하고, 잔액 숫자 바로 아래에 있어야 "이 숫자 때문"임이 읽힌다. */}
+          <div className={`mt-3 mb-4 rounded-xl px-4 py-3 ${
+            isNegativeBalance(account.balance) ? 'bg-[#FFF0F0]' : 'bg-gray-50'
+          }`}>
+            <div className="flex items-center justify-between gap-3">
+              <span className="text-[13px] font-light text-gray-text min-w-0 truncate">{account.name}</span>
+              <div className="flex-shrink-0 text-right">
+                <div className="text-[15px] font-light text-ink">선결제 잔액</div>
+                <div className={[
+                  'text-[16px] font-bold',
+                  isLowBalance(account.balance) ? 'text-danger' : 'text-ink',
+                ].join(' ')}>
+                  {formatWon(account.balance)}
+                </div>
               </div>
             </div>
+
+            {isNegativeBalance(account.balance) && (
+              <p className="mt-3 pt-3 border-t border-[#F5C6C6] text-[12px] text-[#C92A2A] leading-relaxed">
+                선결제 금액이 모두 소진되었어요.<br />
+                빠른 시일 내에 충전해주세요.<br />
+                미정산 금액은 선포스가 도와드릴 수 없어요.
+              </p>
+            )}
           </div>
         </div>
 
@@ -469,18 +542,64 @@ function MenuPageInner() {
           />
         </div>
 
+        {/* 지난 주문 — 카테고리 탭 바로 아래. 처음 시키는 사람에겐 아무것도 안 보인다 */}
+        {account?.code && (
+          <RecentMenus
+            accountCode={account.code}
+            ordererName={orderer}
+            // 데모에선 이 매장의 실제 메뉴로 가짜 '지난 주문'을 만든다(추가 쿼리 없음 —
+            // menus 는 이 화면이 이미 들고 있다). 데모가 아니면 undefined 라 평소대로 RPC 를 탄다.
+            demoPool={account.isDemo ? menus : undefined}
+            onShown={count => {
+              // ⚠️ 데모 트래픽은 로그에서 뺀다. recent_menus_* 는 경험1의 노출 대비 클릭률
+              //    분모·분자라, 미리보기를 열어본 횟수가 섞이면 지표가 오염된다.
+              if (account.isDemo) return
+              track('recent_menus_shown', { count })
+              ampTrack('recent_menus_shown', { count })
+            }}
+            onPick={(menuId, meta) => {
+              // Menu.code 가 곧 menus.id 다 (lib/mappers.ts: code = row.id)
+              const menu = menus.find(m => m.code === menuId)
+              if (!menu) return
+              // 스크롤을 거치지 않고 고른 경우라 scroll_pct 는 0 이다.
+              // 일반 menu_card_click 과 구분해서 봐야 비교가 된다.
+              const payload = {
+                menu_name: menu.name, menu_code: menu.code,
+                rank: meta.rank,          // 지난주문 줄에서 몇 번째 카드였나
+                times: meta.times,        // 그 사람이 몇 번 시킨 메뉴인가
+                is_top: meta.isTop,       // '가장 많이 주문함' 뱃지가 달린 카드였나
+                source: 'recent',
+                ...personProps(orderer),
+              }
+              if (!account.isDemo) {
+                track('recent_menu_click', payload)
+                ampTrack('recent_menu_click', payload)
+                // 뱃지 달린 카드를 고른 경우는 따로도 한 번 — 퍼널에서 바로 분모/분자로 쓰려고
+                if (meta.isTop) {
+                  track('recent_menu_top_click', payload)
+                  ampTrack('recent_menu_top_click', payload)
+                }
+              }
+              router.push(`/menu?item=${menu.code}`)
+            }}
+          />
+        )}
+
         {/* 메뉴 목록 */}
         <div className="pb-[100px]">
-          {categories.map(cat => {
+          {categories.filter(c => menusByCat(c.id).length > 0).map((cat, i) => {
             const catMenus = menusByCat(cat.id)
-            if (catMenus.length === 0) return null
 
             return (
               <div key={cat.id}>
+                {/* 카테고리 사이를 가르는 바. **첫 카테고리 위에는 긋지 않는다** —
+                    바로 위가 카테고리 탭이라(지난 주문이 없는 손님은 더더욱), 거기에
+                    바가 붙으면 탭이 회색 띠를 깔고 앉은 것처럼 보인다.
+                    스크롤 위치 계산에 ref 가 필요하므로 엘리먼트는 남기고 모양만 없앤다. */}
                 <div
                   ref={el => { sectionRefs.current[cat.id] = el }}
                   data-cat={cat.id}
-                  className="h-2 bg-gray-50 mt-2"
+                  className={i === 0 ? 'h-0' : 'h-2 bg-gray-50 mt-2'}
                 />
                 <div className="px-5 pt-5 pb-1">
                   <h2 className="text-[20px] font-bold text-ink">{cat.name}</h2>
@@ -523,7 +642,11 @@ function MenuPageInner() {
 
       {/* 검색 플로팅 버튼 */}
       <button
-        onClick={() => { ampTrack('search_open'); setSearchQuery(''); setSearchOpen(true) }}
+        onClick={() => {
+          const p = personProps(orderer)
+          track('search_open', p); ampTrack('search_open', p)
+          setSearchQuery(''); setSearchOpen(true)
+        }}
         className="fixed right-5 z-20 w-10 h-10 bg-ink text-white rounded-full shadow-lg flex items-center justify-center"
         style={{ bottom: qty > 0 ? '100px' : '20px' }}
         aria-label="메뉴 검색"
@@ -624,7 +747,18 @@ function MenuPageInner() {
                   ref={searchInputRef}
                   value={searchQuery}
                   onChange={e => setSearchQuery(e.target.value)}
-                  onFocus={() => ampTrack('search_field_focus')}
+                  onFocus={() => {
+                    const p = personProps(orderer)
+                    track('search_field_focus', p); ampTrack('search_field_focus', p)
+                  }}
+                  onKeyDown={e => {
+                    // 엔터 = "찾아달라"는 분명한 의사표시. 글자를 치다 만 것과 구분된다.
+                    if (e.key !== 'Enter') return
+                    const q = searchQuery.trim()
+                    if (!q) return
+                    const p = { query: q, query_len: q.length, ...personProps(orderer) }
+                    track('search_submit', p); ampTrack('search_submit', p)
+                  }}
                   placeholder="메뉴 이름을 입력하세요"
                   className="flex-1 bg-transparent outline-none text-[15px] text-ink placeholder:text-gray-text"
                 />
@@ -695,13 +829,18 @@ function MenuPageInner() {
                         <h2 className="text-[20px] font-bold text-ink">{cat.name}</h2>
                       </div>
                       <div className="px-5">
-                        {searchResults.filter(m => m.cat === cat.id).map(menu => (
+                        {searchResults.filter(m => m.cat === cat.id).map((menu, si) => (
                           <MenuCard
                             key={menu.code}
                             menu={menu}
                             onClick={() => {
-                              track('search_menu_click', { menu_name: menu.name, query: searchQuery.trim() })
-                              ampTrack('search_menu_click', { menu_name: menu.name, query: searchQuery.trim() })
+                              const sp = {
+                                menu_name: menu.name, menu_code: menu.code,
+                                query: searchQuery.trim(), rank: si + 1,
+                                ...personProps(orderer),
+                              }
+                              track('search_menu_click', sp)
+                              ampTrack('search_menu_click', sp)
                               setSearchOpen(false)
                               router.push(`/menu?item=${menu.code}`)
                             }}
@@ -763,6 +902,35 @@ function MenuPageInner() {
             )}
           </div>
         </div>
+      )}
+
+      {/* 주문자 변경 — 루트에서 PIN 직후 올라오는 것과 **같은 시트**.
+          여기선 이미 고른 사람이 있으므로 바깥을 눌러 닫을 수 있다(onClose). */}
+      {account && (
+        <OrdererSheet
+          open={ordererSheet}
+          accountCode={account.code}
+          currentName={orderer || undefined}
+          onClose={() => setOrdererSheet(false)}
+          onPick={async m => {
+            setOrdererSheet(false)
+            setOrderer(m.name)
+            try {
+              const { data: phone } = await getSupabaseClient().rpc('member_contact', {
+                p_account_code: account.code,
+                p_pin:          account.pin ?? '',
+                p_member_id:    m.id,
+              })
+              setPhone(typeof phone === 'string' ? phone : '')
+            } catch { setPhone('') }
+          }}
+          onSkip={() => {
+            // 직접 입력하겠다는 뜻 — 세션의 주문자를 비워 체크아웃이 입력칸을 다시 펼치게 한다
+            setOrdererSheet(false)
+            setOrderer('')
+            setPhone('')
+          }}
+        />
       )}
 
       {/* 메뉴 상세 오버레이 — ?item=code 파라미터가 있을 때 표시 */}

@@ -8,6 +8,8 @@ import { getSupabaseClient } from '@/lib/supabase/client'
 import { track } from '@/lib/firebase'
 import { ampTrack, ampIdentify } from '@/lib/amplitude'
 import type { Account } from '@/lib/types'
+import OrdererSheet from '@/components/order/orderer-sheet'
+import LoadingTimer from '@/components/ui/loading-timer'
 
 const PIN_LOCK_LIMIT = 5
 
@@ -30,7 +32,7 @@ export default function HomePage() {
 function HomePageInner() {
   const router = useRouter()
   const searchParams = useSearchParams()
-  const { setAccount, setLoginAt, pinAttempts, pinLocked, incrementPinAttempts, lockPin, resetSession } = useSessionStore()
+  const { setAccount, setLoginAt, setOrderer, setPhone, pinAttempts, pinLocked, incrementPinAttempts, lockPin, resetSession } = useSessionStore()
   const clearCart = useCartStore(s => s.clearCart)
 
   const [pin, setPin] = useState('')
@@ -40,11 +42,36 @@ function HomePageInner() {
   const [toastVisible, setToastVisible] = useState(false)
   const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const [storeName,     setStoreName]     = useState('')
-  const [accountName,   setAccountName]   = useState<string | null>(null)
   const [storeNotFound, setStoreNotFound] = useState(false)
   const [storeClosed,   setStoreClosed]   = useState(false)
   const storeClosedRef = useRef(false)   // verifyPin 스테일 클로저 방지용
+
+  /** 왜 닫혔는지 — 'break' | 'before_open' | 'closed'. store_closed_reason RPC */
+  const [closedReason, setClosedReason] = useState<string>('closed')
+  const [reopenAt,     setReopenAt]     = useState<string>('')
+
+  // 닫힌 걸 확인한 다음에만 묻는다 — 열려 있는 동안 매번 한 번 더 조회할 이유가 없다
+  const loadClosedReason = useCallback(async (sid: string) => {
+    try {
+      const { data } = await getSupabaseClient().rpc('store_closed_reason', { p_store_id: sid })
+      const row = (data as { reason: string; reopen_at: string | null }[] | null)?.[0]
+      if (row) { setClosedReason(row.reason); setReopenAt(row.reopen_at ?? '') }
+    } catch { /* 이유를 못 받아도 기본 문구로 보여준다 */ }
+  }, [])
   const [qrAccountCode, setQrAccountCode] = useState<string | null>(null)
+
+  // ── PIN 통과 뒤 주문자 고르기 ─────────────────────────────────────────────
+  //
+  // 전에는 QR → 명단 화면 → PIN 순서로 화면을 둘로 쪼갰는데, 명단을 보여주려고 PIN 앞에
+  // 화면을 하나 더 세우니 "뭔가 더 해야 하는" 흐름이 됐다. 순서를 되돌려 **PIN 이 먼저**고,
+  // 통과한 그 화면 위로 하단 시트가 올라와 주문자만 고르게 한다.
+  // 뒤에 인증 끝난 화면이 그대로 남아 있어서 단계가 늘어난 느낌이 없다.
+  //
+  // 고르면 주문자가 정해지고 → 메뉴 화면의 '지난번 주문한'이 그 사람 것으로 바뀌고
+  // → 체크아웃의 이름·전화번호 입력이 사라진다.
+  const [sheetOpen,   setSheetOpen]   = useState(false)
+  /** PIN 통과 후 /menu 로 보내기 전에 들고 있는 계정 — 시트에서 고르면 그때 이동 */
+  const [pendingAccount, setPendingAccount] = useState<Account | null>(null)
 
   // URL에서 매장 구분자 추출 (?store={storeId}) + 거래처 QR 파라미터
   const storeId     = searchParams.get('store')   ?? undefined
@@ -68,7 +95,7 @@ function HomePageInner() {
         if (data?.name) {
           setStoreName(data.name)
           document.title = `${data.name} · 선결제 주문`
-          if (data.is_open === false) { storeClosedRef.current = true; setStoreClosed(true) }
+          if (data.is_open === false) { storeClosedRef.current = true; setStoreClosed(true); void loadClosedReason(storeId!) }
         } else {
           setStoreNotFound(true)
         }
@@ -83,7 +110,9 @@ function HomePageInner() {
         if (row?.store_name) {
           setStoreName(row.store_name)
           document.title = `${row.store_name} · 선결제 주문`
-          if (row.store_is_open === false) { storeClosedRef.current = true; setStoreClosed(true) }
+          if (row.store_is_open === false) { storeClosedRef.current = true; setStoreClosed(true)
+            // 이 경로엔 store_id 가 없다(get_account_public 이 안 내려준다) — 기본 문구로 둔다
+          }
         } else {
           setStoreNotFound(true)
         }
@@ -124,9 +153,10 @@ function HomePageInner() {
         return
       }
 
-      // 거래처 특정 완료 — PIN 입력은 그대로 요구 (해당 거래처 PIN만 허용)
+      // 거래처 특정 완료 — PIN 입력은 그대로 요구 (해당 거래처 PIN만 허용).
+      // 주문자 명단은 여기서 미리 받지 않는다 — PIN 을 못 넘기는 사람에겐 필요 없는 조회고,
+      // 명단이 보이는 건 인증 뒤 시트에서다.
       setQrAccountCode(row.account_code)
-      setAccountName(row.account_name)
     }
     loadByQr()
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -247,11 +277,26 @@ function HomePageInner() {
       track('pin_login', { account_type: data.account_type, store_id: data.store_id ?? '' })
       ampIdentify(data.account_code, data.account_type)
       ampTrack('pin_login', { account_type: data.account_type, store_id: data.store_id ?? '' })
-      setTimeout(() => router.push('/menu'), 120)
+
+      // 개인 거래처는 거래처명이 곧 주문자라 물을 게 없다 — 바로 메뉴로.
+      // 과·기업만 시트를 올려 "그 안의 누구"를 고르게 한다.
+      if (account.type === '개인') {
+        // ⚠️ push 가 아니라 **replace** 다.
+        //    push 면 PIN 화면이 히스토리에 남아, 메뉴에서 뒤로가기를 누르면 그리로 돌아간다.
+        //    QR 종이를 사무실마다 붙여둔 이유가 "들어올 때마다 QR을 찍는다"인데,
+        //    뒤로가기로 PIN 화면에 닿을 수 있으면 QR을 배부한 의미가 없다.
+        //    replace 면 QR로 열린 탭의 히스토리에 PIN 항목 자체가 남지 않는다.
+        setTimeout(() => router.replace('/menu'), 120)
+        return
+      }
+      setPendingAccount(account)
+      // 점 네 개가 다 차는 모습을 한 박자 보여주고 시트를 올린다.
+      // 바로 띄우면 "PIN 이 맞았나?"를 확인할 틈이 없다.
+      setTimeout(() => setSheetOpen(true), 260)
     } finally {
       setVerifying(false)
     }
-  }, [pinAttempts, incrementPinAttempts, lockPin, setAccount, triggerShake, verifying, router, storeName, qrAccountCode, storeId])
+  }, [pinAttempts, incrementPinAttempts, lockPin, setAccount, setLoginAt, triggerShake, verifying, router, storeName, qrAccountCode, storeId])
 
   const handleNumpad = useCallback((val: string) => {
     if (isLocked || verifying) return
@@ -273,13 +318,26 @@ function HomePageInner() {
 
   // ── QR 코드 없이 직접 접속 ──
   if (storeClosed) {
+    // 왜 닫혔는지에 따라 할 말이 다르다. 브레이크는 "조금 뒤에 다시 오면 된다"이고
+    // 영업 종료는 "오늘은 끝났다"다 — 같은 문장으로 묶으면 손님이 헛걸음한다.
+    const isBreak = closedReason === 'break'
     return (
       <div className="flex flex-col items-center justify-center min-h-screen px-8 text-center bg-surface">
-        <div className="text-[64px] mb-6">🌙</div>
-        <h2 className="text-[20px] font-bold text-[#222222] mb-3">현재 가게 운영시간이 아니에요</h2>
+        <div className="w-12 h-12 rounded-full bg-[#F5F5F5] flex items-center justify-center mb-5">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none">
+            <circle cx="12" cy="12" r="9" stroke="#727272" strokeWidth="1.8" />
+            <path d="M12 7.5V12l3 1.8" stroke="#727272" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
+        </div>
+        <h2 className="text-[20px] font-bold text-[#222222] mb-3">
+          {isBreak ? '지금은 브레이크 타임이에요' : '지금은 주문을 받지 않아요'}
+        </h2>
         <p className="text-[14px] text-[#727272] leading-relaxed">
-          운영을 잠시 쉬고 있어요.<br />
-          가게 운영시간에 다시 방문해 주세요 😊
+          {isBreak && reopenAt
+            ? <>{reopenAt}부터 다시 주문할 수 있어요</>
+            : closedReason === 'before_open' && reopenAt
+              ? <>{reopenAt}에 문을 열어요</>
+              : <>가게 운영시간에 다시 방문해 주세요</>}
         </p>
       </div>
     )
@@ -396,7 +454,7 @@ function HomePageInner() {
   if (!storeName) {
     return (
       <div className="flex items-center justify-center min-h-screen bg-surface">
-        <div className="w-8 h-8 rounded-full border-2 border-[#D7D7D7] border-t-[#017333] animate-spin" />
+        <LoadingTimer size={40} />
       </div>
     )
   }
@@ -406,26 +464,18 @@ function HomePageInner() {
       {searchParams.get('expired') === '1' && (
         <div className="mx-5 mt-5 px-4 py-3 rounded-xl bg-[#FFF0F0]">
           <p className="text-[13px] font-normal text-[#C92A2A] text-left leading-relaxed">
-            주문 시간(5분)이 지났어요. 비밀번호를 다시 입력해주세요.
+            주문 시간(10분)이 지났어요. 비밀번호를 다시 입력해주세요.
           </p>
         </div>
       )}
 
-      {/* 매장명 + 거래처 — 최상단 한 줄 */}
-      <div className="px-6 pt-8 flex items-center justify-center gap-1">
-        <span className="text-[14px] text-[#222222] font-medium">{storeName}</span>
-        {accountName && (
-          <>
-            <span className="inline-block w-px h-3 bg-[#E0E0E0]" />
-            <span className="text-[14px] text-[#222222] font-medium">{accountName}</span>
-          </>
-        )}
-      </div>
-
-      {/* 타이틀 */}
-      <div className="px-6 pt-10 pb-8 flex flex-col items-center text-center">
-        <h1 className="text-[28px] font-bold text-[#222222] leading-tight">
-          선결제 비밀번호를<br />입력해 주세요
+      {/* 맨 위에 매장명 — 좌측정렬.
+          '선결제 비밀번호를 입력해 주세요'를 빼고 그 28px 포맷을 매장명이 물려받았다.
+          네 칸짜리 점과 숫자패드가 바로 아래 있어서 "비밀번호를 치라"는 말은 없어도 읽히고,
+          대신 "여기가 어느 가게인지"는 글자로만 알 수 있어서 그쪽을 세운다. */}
+      <div className="px-6 pt-[52px] pb-8">
+        <h1 className="text-[28px] font-bold text-[#222222] leading-tight break-keep">
+          {storeName}
         </h1>
       </div>
 
@@ -450,7 +500,7 @@ function HomePageInner() {
       {/* 로딩 오버레이 */}
       {verifying && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-surface">
-          <div className="w-10 h-10 rounded-full border-2 border-[#D7D7D7] border-t-[#017333] animate-spin" />
+          <LoadingTimer size={44} />
         </div>
       )}
 
@@ -518,6 +568,31 @@ function HomePageInner() {
         </a>
       </div>
 
+      {/* 주문자 선택 — PIN 통과 뒤 이 화면 위로 올라온다.
+          onClose 를 주지 않는다: 아직 아무도 안 골랐으니 밖을 눌러 닫아버리면
+          "인증은 됐는데 아무 데도 못 가는" 상태가 된다. 나가는 길은 선택 또는 '명단에 없어요'뿐. */}
+      <OrdererSheet
+        open={sheetOpen}
+        accountCode={pendingAccount?.code ?? ''}
+        onPick={async m => {
+          setSheetOpen(false)
+          setOrderer(m.name)
+          // 전화번호는 member_contact RPC 로 받는다.
+          // account_members 를 직접 select 하면 **anon 은 한 줄도 못 읽는다** —
+          // 그 테이블의 anon 정책이 accounts 서브쿼리를 타는데 anon 은 accounts 권한이 없다.
+          // 실패해도 주문은 막지 않는다. 이름만 있으면 체크아웃에서 번호만 받으면 된다.
+          try {
+            const { data: phone } = await getSupabaseClient().rpc('member_contact', {
+              p_account_code: pendingAccount?.code ?? '',
+              p_pin:          pendingAccount?.pin ?? '',
+              p_member_id:    m.id,
+            })
+            if (typeof phone === 'string' && phone) setPhone(phone)
+          } catch { /* 번호는 없어도 진행 */ }
+          router.replace('/menu')
+        }}
+        onSkip={() => { setSheetOpen(false); router.replace('/menu') }}
+      />
     </div>
   )
 }

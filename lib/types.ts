@@ -27,6 +27,8 @@ export interface MenuOptionItem {
   plus: number           // 추가가격
   isSoldOut?: boolean
   isHidden?: boolean
+  /** 수량 버튼 최대 개수 (option_items.max_quantity) — 없으면 수량 버튼 없이 한 번만 선택 */
+  maxQty?: number | null
 }
 
 export interface MenuOptionGroup {
@@ -63,6 +65,8 @@ export interface SelectedOption {
   optionId: string
   optionName: string
   plus: number
+  /** 이 옵션을 몇 개 담았는지 — 수량 버튼을 쓰지 않는 옵션은 1 */
+  qty?: number
 }
 
 export interface CartItem {
@@ -85,4 +89,5 @@ export interface OrderItemPayload {
   option_item_ids: string[]
   option_names: string[]
   option_prices: number[]
+  option_quantities: number[]
 }

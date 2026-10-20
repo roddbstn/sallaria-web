@@ -70,13 +70,74 @@ button:active {
   to   { opacity: 1; }
 }
 
+/* ── 하단 시트 ────────────────────────────────────────────────────────────
+   화면 아래에서 밀려 올라오는 모달. 전체 화면을 갈아끼우는 대신 이걸 쓰는 이유는,
+   PIN 을 막 통과한 화면이 뒤에 그대로 남아 있어야 "로그인은 끝났고 한 가지만 더"로
+   읽히기 때문이다. 화면이 통째로 바뀌면 단계가 하나 더 생긴 것처럼 느껴진다.
+
+   cubic-bezier 는 끝에서 살짝 감속만 — 튕기는(overshoot) 곡선은 손가락으로 끌어올린
+   느낌을 흉내 내려다 오히려 느리게 느껴진다. */
+@keyframes sheetUp {
+  from { transform: translateY(100%); }
+  to   { transform: translateY(0); }
+}
+@keyframes sheetDown {
+  from { transform: translateY(0); }
+  to   { transform: translateY(100%); }
+}
+.sheet-in   { animation: sheetUp 280ms cubic-bezier(0.22, 0.9, 0.3, 1) both; }
+.sheet-out  { animation: sheetDown 220ms cubic-bezier(0.55, 0, 0.7, 0.2) both; }
+.backdrop-in  { animation: backdropFadeIn 280ms ease-out both; }
+.backdrop-out { animation: backdropFadeIn 200ms ease-in both reverse; }
+
+/* 시트 안에서 고른 항목이 눌리는 느낌 */
+.sheet-pick:active { transform: scale(0.97); }
+.sheet-pick { transition: transform 120ms ease-out, background-color 120ms ease-out; }
+
+@media (prefers-reduced-motion: reduce) {
+  .sheet-in, .sheet-out, .backdrop-in, .backdrop-out { animation-duration: 1ms; }
+}
+
 /* 모바일 우선, max-width 430px */
 .screen {
   max-width: 430px;
   margin: 0 auto;
+  /* height(고정) 여야 한다. min-height 면 내용이 길어질 때 컨테이너가 뷰포트 밖으로 자라고,
+     그러면 안쪽 `flex-1 overflow-y-auto` 가 제한을 못 받아 스크롤이 안 생긴다.
+     그 결과 하단 버튼 바(footer flex-shrink-0)가 문서 맨 끝으로 밀려서
+     "끝까지 스크롤해야 주문하기 버튼이 보이는" 상태가 된다.
+     장바구니·주문확인·주문완료 세 화면이 모두 이 구조를 쓴다. */
+  height: 100dvh;
   min-height: 100dvh;
   display: flex;
   flex-direction: column;
   background: var(--surface);
   position: relative;
+}
+
+
+/* ── 로딩 타이머 (components/ui/loading-timer.tsx) ──────────────────────────
+   몸통은 좌우로 기울었다 잦아들고, 바늘은 쉬지 않고 돈다.
+   한 주기 끝에 쉬는 구간(70~100%)을 둔 이유: 쉬지 않고 흔들면 눈이 피로하고
+   "에러로 떨고 있다"처럼 보인다. 울렸다 멈췄다 해야 알람으로 읽힌다. */
+@keyframes timerWobble {
+  0%   { transform: rotate(0deg); }
+  8%   { transform: rotate(-13deg); }
+  18%  { transform: rotate(11deg); }
+  28%  { transform: rotate(-8deg); }
+  38%  { transform: rotate(6deg); }
+  48%  { transform: rotate(-3deg); }
+  58%  { transform: rotate(0deg); }
+  100% { transform: rotate(0deg); }
+}
+@keyframes timerHand {
+  from { transform: rotate(0deg); }
+  to   { transform: rotate(360deg); }
+}
+.timer-wobble { animation: timerWobble 1.8s ease-in-out infinite; transform-origin: 50% 60%; }
+.timer-hand   { animation: timerHand 1.2s linear infinite; }
+
+@media (prefers-reduced-motion: reduce) {
+  .timer-wobble { animation: none; }
+  .timer-hand   { animation-duration: 3s; }
 }

@@ -24,7 +24,8 @@ export function isNegativeBalance(balance: number): boolean {
 
 // 옵션 추가금액 합산
 export function calcOptionExtra(selectedOptions: SelectedOption[]): number {
-  return selectedOptions.reduce((sum, o) => sum + o.plus, 0)
+  // 수량 버튼을 쓰는 옵션(qty>1)은 추가금액도 수량만큼 곱한다 — 서버(create_order)도 동일하게 계산
+  return selectedOptions.reduce((sum, o) => sum + o.plus * (o.qty ?? 1), 0)
 }
 
 // 카트 아이템 소계 계산: (기본가 + 옵션 합) × 수량
@@ -37,9 +38,10 @@ export function calcSubtotal(
 }
 
 // 선택된 옵션 표시 문자열 (예: "현미밥, 100g, 오리엔탈")
+// 수량 버튼으로 2개 이상 담은 옵션은 "발사믹 소스 ×2"처럼 수량을 함께 보여준다
 export function formatOptionsLabel(selectedOptions: SelectedOption[]): string {
   if (selectedOptions.length === 0) return ''
-  return selectedOptions.map(o => o.optionName).join(', ')
+  return selectedOptions.map(o => (o.qty && o.qty > 1 ? `${o.optionName} ×${o.qty}` : o.optionName)).join(', ')
 }
 
 // 장바구니 아이템 고유 ID 생성

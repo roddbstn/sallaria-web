@@ -9,6 +9,7 @@ import { track } from '@/lib/firebase'
 import { ampTrack } from '@/lib/amplitude'
 import type { CartItem } from '@/lib/types'
 import FeedbackModal from '@/components/feedback/feedback-modal'
+import LoadingTimer from '@/components/ui/loading-timer'
 
 type OrderResultStatus = 'pending' | 'accepted' | 'rejected'
 
@@ -165,6 +166,21 @@ function SuccessPageInner() {
                 const now = Date.now()
                 setStatus('accepted')
                 setAcceptedAt(prev => { if (prev) return prev; sessionStorage.setItem('last_order_accepted_at', String(now)); return now })
+
+                // 예상시간은 ORDER_ACCEPTED broadcast 로도 오지만, broadcast 는 **그 순간
+                // 구독 중이던 화면에만** 닿는다. 화면을 잠깐 닫았거나 네트워크가 끊겼으면
+                // 영영 못 받는다. DB 행에는 prep_minutes 가 남으므로 여기서도 읽어 둔다.
+                // 안내 시간은 주방 시간과 손님 희망 중 **긴 쪽**(POS 와 같은 규칙).
+                const prep = Number(payload.new?.prep_minutes ?? 0)
+                const want = Number(payload.new?.requested_pickup_minutes ?? 0)
+                const mins = Math.max(prep, want)
+                if (mins > 0) {
+                  setTotalSeconds(prev => prev || mins * 60)
+                  setSecondsLeft(prev => prev || mins * 60)
+                  if (!sessionStorage.getItem('last_order_total_seconds')) {
+                    sessionStorage.setItem('last_order_total_seconds', String(mins * 60))
+                  }
+                }
               } else if (s === '완료') {
                 setStatus('accepted')
                 setAcceptedAt(prev => { if (prev) return prev; const now = Date.now(); sessionStorage.setItem('last_order_accepted_at', String(now)); return now })
@@ -518,12 +534,12 @@ function SuccessPageInner() {
   if (status === 'pending') {
     return (
       <div className="screen">
-        <div className="flex-1 flex flex-col items-center justify-center gap-4 px-8">
-          <div className="w-16 h-16 rounded-full border-4 border-[#D7D7D7] border-t-[#017333] animate-spin" />
-          <p className="text-base font-semibold text-[#222222]">주문을 접수 중이에요...</p>
-          <p className="text-sm text-[#727272] text-center">
-            잠시만 기다려주세요.
-          </p>
+        {/* 스피너를 4px 테두리 64px 에서 2px 테두리 40px 로 줄였다. 기다리는 화면에서
+            굵은 링이 크게 돌면 "뭔가 오래 걸린다"로 읽힌다 — 조용히 도는 쪽이 짧게 느껴진다. */}
+        {/* 글자를 뺐다. 흔들리는 타이머 하나면 "기다리는 중"이 전해지고,
+            그 아래 문장은 읽을 틈도 없이 다음 화면으로 넘어간다. */}
+        <div className="flex-1 flex items-center justify-center px-8">
+          <LoadingTimer size={52} />
         </div>
       </div>
     )
@@ -533,17 +549,26 @@ function SuccessPageInner() {
   if (status === 'rejected') {
     return (
       <div className="screen">
-        <div className="flex-1 flex flex-col items-center justify-center gap-4 px-8">
-          <span className="text-[72px] leading-none">😢</span>
-          <p className="text-lg font-bold text-[#222222]">주문이 거부되었어요</p>
-          <div className="w-full px-4 py-3 bg-red-50 rounded-xl">
-            <p className="text-sm text-[#C92A2A] text-center">
-              매장에서 &lsquo;{rejectedReason || '사유 미입력'}&rsquo;로 인해 주문을 거부하였어요
+        {/* 😢 를 뺐다. 주문이 취소된 사람에게 우는 얼굴은 놀리는 것처럼 보인다.
+            여기서 필요한 건 **왜 취소됐는지** 한 줄이고, 그걸 가장 크게 둔다. */}
+        <div className="flex-1 flex flex-col items-center justify-center gap-6 px-8">
+          <div className="w-12 h-12 rounded-full bg-[#FFF0F0] flex items-center justify-center">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none">
+              <path d="M7 7l10 10M17 7L7 17" stroke="#C92A2A" strokeWidth="2.2" strokeLinecap="round" />
+            </svg>
+          </div>
+
+          <div className="text-center space-y-2">
+            <p className="text-[18px] font-bold text-[#222222]">주문이 취소됐어요</p>
+            <p className="text-[13px] text-[#727272]">선결제 잔액은 그대로 돌아갔어요</p>
+          </div>
+
+          <div className="w-full rounded-xl bg-[#F5F5F5] px-4 py-3.5 text-center">
+            <p className="text-[12px] text-[#727272] mb-1">취소 사유</p>
+            <p className="text-[15px] font-semibold text-[#222222] leading-relaxed">
+              {rejectedReason || '매장에서 사유를 남기지 않았어요'}
             </p>
           </div>
-          <p className="text-sm text-[#727272] text-center">
-            죄송합니다. 추후 다시 주문해주세요.
-          </p>
         </div>
       </div>
     )
@@ -568,7 +593,6 @@ function SuccessPageInner() {
             className="rounded-2xl py-8 px-5 flex flex-col items-center gap-2 text-center"
             style={{ background: 'linear-gradient(135deg, #02a84e 0%, #017333 60%, #015a28 100%)' }}
           >
-            <span className="text-[64px] leading-none mt-1">🎉</span>
             <p className="text-[20px] font-bold text-white mt-1">
               {isDelivery
                 ? `${orderOrderer ? `${orderOrderer}님의 ` : ''}배달이 출발했어요`
@@ -577,7 +601,7 @@ function SuccessPageInner() {
             {isDelivery && departedAt && (
               <div className="mt-1 px-4 py-1.5 rounded-full" style={{ backgroundColor: 'rgba(255,255,255,0.18)' }}>
                 <span className="text-[15px] font-bold text-white">
-                  🛵 {new Date(departedAt).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', hour12: false })} 출발
+                  {new Date(departedAt).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', hour12: false })} 출발
                 </span>
               </div>
             )}
@@ -594,7 +618,7 @@ function SuccessPageInner() {
           /* ── 접수 완료: 기존 레이아웃 ── */
           <div className="flex items-center justify-between">
             <div>
-              <p className="text-xl font-bold text-[#222222]">주문이 접수됐어요!</p>
+              <p className="text-[20px] font-bold text-[#222222]">주문이 접수됐어요</p>
               {(orderNumber ?? orderCode) && (
                 <span className="inline-block border border-[#b2dfc3] bg-[#E6F4EC] rounded-xl px-3 py-1 font-mono font-bold text-[#017333] text-[36px] tracking-widest leading-none mt-2">
                   #{orderNumber ?? orderCode}
@@ -602,7 +626,9 @@ function SuccessPageInner() {
               )}
             </div>
             <div className="w-9 h-9 rounded-full flex items-center justify-center flex-shrink-0" style={{ background: 'linear-gradient(135deg, #02a84e 0%, #017333 60%, #015a28 100%)' }}>
-              <span className="text-white text-lg font-bold leading-none">✓</span>
+              <svg width="16" height="16" viewBox="0 0 20 20" fill="none">
+                <path d="M4 10.5l4 4L16 6" stroke="#fff" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
             </div>
           </div>
         )}
@@ -621,14 +647,14 @@ function SuccessPageInner() {
               />
             </div>
             <p className="text-[11px] text-white/60 mt-2 text-center">
-              준비가 일찍 끝날 수도 있어요. 새로고침해서 확인해보세요 🔄
+              준비가 일찍 끝날 수도 있어요
             </p>
           </div>
         )}
 
 
         {/* 주문 정보 */}
-        <div className="bg-[#FAFAFA] rounded-xl px-4 py-4 space-y-2 text-sm">
+        <div className="bg-[#F5F5F5] rounded-xl px-4 py-4 space-y-2 text-[13px]">
           {orderAccount && (
             <div className="flex justify-between">
               <span className="text-[#727272]">거래처</span>
@@ -658,7 +684,7 @@ function SuccessPageInner() {
             </div>
           )}
           {orderBalanceBefore !== null && (
-            <div className="flex justify-between pt-2 border-t border-[#F0F0F0]">
+            <div className="flex justify-between pt-2.5 mt-0.5 border-t border-[#E6E6E6]">
               <span className="text-[#727272]">기존 선결제 잔액</span>
               <span className="font-normal text-[#222222]">{formatWon(orderBalanceBefore)}</span>
             </div>
@@ -670,7 +696,7 @@ function SuccessPageInner() {
             </div>
           )}
           {orderBalanceAfter !== null && (
-            <div className="flex justify-between pt-3 mt-1 border-t border-[#E8E8E8]">
+            <div className="flex justify-between pt-2.5 mt-0.5 border-t border-[#E6E6E6]">
               <span className="text-[#727272]">주문 후 잔액</span>
               <span className={`font-normal ${orderBalanceAfter < 0 ? 'text-[#C92A2A]' : 'text-[#222222]'}`}>
                 {formatWon(orderBalanceAfter)}
@@ -681,12 +707,9 @@ function SuccessPageInner() {
 
         {/* 잔액 차감 안내 */}
         {account && (
-          <div className="flex items-center justify-center gap-1.5 px-4 py-2.5 bg-[#E6F4EC] rounded-xl">
-            <span className="text-[#017333] text-sm">✓</span>
-            <p className="text-sm text-[#017333] font-semibold">
-              선결제 잔액에서 {formatWon(orderTotal)}이 차감되었어요
-            </p>
-          </div>
+          <p className="px-4 py-2.5 bg-[#E6F4EC] rounded-xl text-center text-[13px] text-[#017333] font-semibold">
+            선결제 잔액에서 {formatWon(orderTotal)}이 차감되었어요
+          </p>
         )}
 
         {/* 주문 메뉴 목록 */}
@@ -739,13 +762,12 @@ function SuccessPageInner() {
         )}
 
         {/* 취소 불가 안내 */}
-        <div className="flex items-start gap-2 px-4 py-3 bg-surface rounded-xl border border-[#D7D7D7]">
-          <span className="text-[#222222] text-sm mt-0.5">ℹ️</span>
-          <p className="text-[13px] text-[#727272] leading-relaxed">
-            주문 접수 후에는 취소 및 환불이 어려워요.<br />
-            문의는 매장으로 직접 연락해 주세요.
-          </p>
-        </div>
+        {/* 테두리 박스 + ℹ️ 를 뺐다. 이 화면에서 가장 조용해야 할 줄인데 테두리가 쳐져 있어
+            위의 결제 정보만큼 눈에 들어왔다. 글자만 남긴다. */}
+        <p className="px-1 text-[12px] text-[#ADADAD] leading-relaxed text-center">
+          주문 접수 후에는 취소 및 환불이 어려워요<br />
+          문의는 매장으로 직접 연락해 주세요
+        </p>
       </div>
 
       {/* 네이버 리뷰 — 하단 스티키 플로팅 */}
