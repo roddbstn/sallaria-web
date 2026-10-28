@@ -4,7 +4,7 @@ import { useRouter } from 'next/navigation'
 import { useState, useEffect } from 'react'
 import { useCartStore } from '@/lib/store/cart'
 import { useSessionStore } from '@/lib/store/session'
-import { formatWon, formatOptionsLabel, DELIVERY_FEE } from '@/lib/utils'
+import { formatWon, formatOptionsLabel, DELIVERY_FEE, entrySourceBreakdown } from '@/lib/utils'
 import type { OrderMethod, OrderItemPayload } from '@/lib/types'
 import { PICKUP_OPTIONS, needsPickupTime, pickupSummary } from '@/lib/pickup-time'
 import { getSupabaseClient } from '@/lib/supabase/client'
@@ -253,6 +253,29 @@ export default function CheckoutPage() {
     (method === '배달' && (!baseAddress.trim() || deliveryCalculating || !!deliveryCalcError)) ||
     pickupMissing
 
+  /**
+   * 버튼이 왜 회색인지 한 줄로.
+   *
+   * 차단 조건이 다섯인데 결과는 **전부 똑같은 회색 버튼**이었다. 손님은 무엇을 더
+   * 해야 하는지 알 수 없고, 화면에 빨간 잔액 경고가 떠 있으면 그게 원인이라고 읽는다.
+   * (실제로 "잔액 마이너스라 주문이 막힌 것 같다"는 문의가 그래서 나왔다 —
+   *  잔액은 주문을 막지 않는다. 룰: 잔액 음수 허용.)
+   *
+   * 순서는 **손님이 위에서부터 채우는 순서**다. 두 개가 비었을 때 아래쪽을 먼저
+   * 가리키면 고쳐도 버튼이 안 열려서 같은 혼란이 반복된다.
+   */
+  const blockReason: string | null =
+    isSubmitting                                             ? null
+    : !method                                                ? '이용 방법을 골라주세요'
+    : !isPersonal && !ordererName.trim()                     ? '주문자 이름을 입력해주세요'
+    : !isPersonal && !isPhoneValid                           ? '전화번호를 확인해주세요'
+    : !isPersonal && !privacyAgreed                          ? '개인정보 수집에 동의해주세요'
+    : method === '배달' && !baseAddress.trim()                ? '배달 주소를 입력해주세요'
+    : method === '배달' && deliveryCalculating               ? '배달료를 계산하고 있어요'
+    : method === '배달' && !!deliveryCalcError               ? '배달 주소를 다시 확인해주세요'
+    : pickupMissing                                          ? '수령 시간을 골라주세요'
+    : null
+
   async function handleOrder() {
     if (!account || !method || items.length === 0) return
     if (!isPersonal && (!ordererName.trim() || !isPhoneValid)) return
@@ -440,14 +463,19 @@ export default function CheckoutPage() {
         detail: { order_code: result.order_code, order_number: result.order_number },
       }))
 
+      // 유입 경로 구성비를 함께 보낸다 — 이게 있어야 "지난주문으로 담아 결제까지 간 건수·금액"을
+      // 주문 DB 수작업 대조 없이 Amplitude 에서 바로 읽을 수 있다.
+      // 장바구니엔 경로가 섞이므로 단일 값이 아니라 건수·금액 구성비로 싣는다.
+      const breakdown = entrySourceBreakdown(items)
       track('purchase', {
         transaction_id: result.order_code,
         value:          total,
         currency:       'KRW',
         items:          items.map(i => ({ item_name: i.menuName, quantity: i.qty, price: i.basePrice })),
         method,
+        ...breakdown,
       })
-      ampTrack('purchase', { order_code: result.order_code, total, method })
+      ampTrack('purchase', { order_code: result.order_code, total, method, ...breakdown })
     } catch (err) {
       console.error('[checkout] unexpected error:', err)
       const reason = '주문 처리에 실패했습니다.'
@@ -799,10 +827,12 @@ export default function CheckoutPage() {
             </div>
           </div>
 
-          {/* 잔액 부족 안내 */}
+          {/* 잔액 부족 안내 — 장바구니 요약(CartSummary)과 같은 박스다.
+              한쪽만 바꾸면 다음 단계에서 경고가 초록으로 되돌아가
+              "해결됐나?"로 읽힌다. 그래서 톤을 같이 맞춘다. */}
           {isNegative && (
-            <div className="mt-3 px-3 py-2 bg-[#E6F4EC] rounded-lg">
-              <p className="text-xs text-[#017333] font-semibold">
+            <div className="mt-3 px-3 py-2 bg-[#FFF0F0] rounded-lg">
+              <p className="text-xs text-[#C92A2A] font-semibold">
                 다음 번엔 잔액을 충전해주세요 😊
               </p>
             </div>
@@ -914,9 +944,15 @@ export default function CheckoutPage() {
         >
           {isSubmitting ? '주문 중...' : '주문하기'}
         </button>
-        <p className="text-center text-xs text-[#727272] mt-2">
-          주문 취소는 어려워요. 신중하게 확인해주세요.
-        </p>
+        {/* 막혀 있으면 **무엇이 모자란지**, 아니면 기존 주의 문구.
+            두 줄을 같이 띄우면 정작 읽어야 할 쪽이 묻힌다 */}
+        {blockReason ? (
+          <p className="text-center text-xs text-[#C92A2A] mt-2">{blockReason}</p>
+        ) : (
+          <p className="text-center text-xs text-[#727272] mt-2">
+            주문 취소는 어려워요. 신중하게 확인해주세요.
+          </p>
+        )}
       </footer>
     </div>
   )

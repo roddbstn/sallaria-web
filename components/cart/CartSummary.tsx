@@ -79,8 +79,11 @@ export default function CartSummary({
         />
       </div>
 
+      {/* 잔액이 마이너스인데 초록(--green-soft)이었다. 초록은 이 앱에서 '선결제·잔액·정상'
+          을 뜻하는 색이라, 경고를 그 색으로 쓰면 "괜찮다"로 읽힌다.
+          메뉴 화면의 마이너스 안내와 같은 톤(#FFF0F0 / --danger)으로 맞춘다. */}
       {isNegative && (
-        <p className="text-[12px] text-[#017333] bg-[#E6F4EC] rounded-lg px-3 py-2 !mt-3">
+        <p className="text-[12px] text-[#C92A2A] bg-[#FFF0F0] rounded-lg px-3 py-2 !mt-3">
           다음 번엔 잔액을 충전해 주세요
         </p>
       )}

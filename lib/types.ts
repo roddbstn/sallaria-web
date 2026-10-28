@@ -78,7 +78,20 @@ export interface CartItem {
   qty: number
   selectedOptions: SelectedOption[]
   subtotal: number       // (basePrice + Σplus) * qty
+  /**
+   * 이 항목을 **어느 목록에서** 골라 담았나 — 담기→주문 기여도를 재기 위한 꼬리표.
+   *
+   * 경로는 화면이 아니라 **담긴 항목에 붙은 속성**이라, 항목과 같은 수명을 가져야 한다.
+   * 상세 화면의 `?from=` 은 담기 직후 사라지므로 여기로 옮겨 적는다.
+   *
+   * 선택 필드인 이유: 장바구니는 sessionStorage 에 persist 된다. 배포 시점에 이미
+   * 담아둔 항목엔 이 값이 없고, 필수로 두면 타입만 맞고 런타임은 undefined 가 된다.
+   */
+  entrySource?: EntrySource
 }
+
+/** 'direct' = 장바구니 수정 재진입·주소 직접 입력 등 목록을 거치지 않은 경우 */
+export type EntrySource = 'recent' | 'search' | 'list' | 'direct'
 
 // DB 주문 생성 페이로드 타입 (RPC 호출용)
 export interface OrderItemPayload {

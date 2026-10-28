@@ -42,10 +42,14 @@ function sinceLabel(iso: string | null): string {
 }
 
 export default function OrdererSheet({
-  open, accountCode, currentName, onPick, onSkip, onClose,
+  open, accountCode, pin, currentName, onPick, onSkip, onClose,
 }: {
   open:        boolean
   accountCode: string
+  /** PIN 인증 때 쓴 값. 명단은 PIN 뒤에 있다 —
+   *  account_code 는 QR URL 에 그대로 들어 있어 신분 증명이 못 된다.
+   *  member_contact RPC 와 같은 방식이다. */
+  pin: string
   /** 이미 고른 사람이 있으면 그 카드를 선택 상태로 */
   currentName?: string
   onPick: (m: MemberRow) => void
@@ -70,11 +74,11 @@ export default function OrdererSheet({
   }, [open])
 
   useEffect(() => {
-    if (!open || !accountCode) return
+    if (!open || !accountCode || !pin) return
     let cancelled = false
     setLoading(true)
     getSupabaseClient()
-      .rpc('list_account_members', { p_account_code: accountCode })
+      .rpc('list_account_members', { p_account_code: accountCode, p_pin: pin })
       .then(({ data, error }: { data: unknown; error: unknown }) => {
         if (cancelled) return
         const list = error ? [] : ((data ?? []) as MemberRow[])
@@ -86,7 +90,7 @@ export default function OrdererSheet({
         }
       })
     return () => { cancelled = true }
-  }, [open, accountCode])
+  }, [open, accountCode, pin])
 
   // 시트가 떠 있는 동안 뒤 화면이 스크롤되지 않게
   useEffect(() => {

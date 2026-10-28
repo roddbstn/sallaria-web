@@ -7,7 +7,7 @@ import RecentMenus from '@/components/menu/recent-menus'
 import OrdererSheet from '@/components/order/orderer-sheet'
 import { useCartStore } from '@/lib/store/cart'
 import { getSupabaseClient } from '@/lib/supabase/client'
-import { formatWon, isLowBalance, isNegativeBalance } from '@/lib/utils'
+import { formatWon, isLowBalance, isNegativeBalance, entrySourceBreakdown } from '@/lib/utils'
 import MenuCard from '@/components/menu/menu-card'
 import { track } from '@/lib/firebase'
 import { ampTrack } from '@/lib/amplitude'
@@ -103,13 +103,15 @@ function MenuPageInner() {
     const supabase = getSupabaseClient()
 
     const currentAccount = account
-    // accounts 테이블 직접 조회 금지 — RPC로만 (anon이 전체 거래처를 긁어갈 수 없도록)
+    // accounts 테이블 직접 조회 금지 — RPC로만 (anon이 전체 거래처를 긁어갈 수 없도록).
+    // 2026-10-27: get_account_public → account_balance 로 바꿨다.
+    // 전자는 PIN 을 안 봐서, account_code(= QR URL 에 그대로 있는 값)만 알면
+    // 아무나 남의 잔액을 볼 수 있었다. 후자는 PIN 을 대조한다.
     supabase
-      .rpc('get_account_public', { p_account_code: currentAccount.code })
-      .then(({ data }: { data: { current_balance: number }[] | null }) => {
-        const row = data?.[0]
-        if (row && row.current_balance !== currentAccount.balance) {
-          setAccount({ ...currentAccount, balance: row.current_balance })
+      .rpc('account_balance', { p_account_code: currentAccount.code, p_pin: currentAccount.pin ?? '' })
+      .then(({ data }: { data: number | null }) => {
+        if (typeof data === 'number' && data !== currentAccount.balance) {
+          setAccount({ ...currentAccount, balance: data })
         }
       })
 
@@ -145,43 +147,24 @@ function MenuPageInner() {
       try {
         const supabase = getSupabaseClient()
 
-        let catQuery = supabase
-          .from('categories')
-          .select('id, name, display_order')
-          .eq('is_active', true)
-          .order('display_order', { ascending: true })
-        if (account?.storeId) catQuery = catQuery.eq('store_id', account.storeId)
-        const { data: catData, error: catError } = await catQuery
-        if (catError) throw catError
+        // 카테고리 + 메뉴를 한 번에 받는다(qr_menu_board). 전엔 categories 를 받아야
+        // 그 id 로 menus 를 칠 수 있어 왕복이 반드시 두 번이었다.
+        // RPC 는 SECURITY INVOKER 라 RLS 가 그대로 적용되고, 반환 모양도 기존
+        // PostgREST 중첩 결과와 같아서 mapDbMenu 를 고칠 필요가 없다.
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const { data: board, error: boardError } = await (supabase as any)
+          .rpc('qr_menu_board', { p_store_id: account?.storeId ?? null })
+        if (boardError) throw boardError
 
-        if (!catData || catData.length === 0) {
-          return
-        }
+        const catData = (board?.categories ?? []) as { id: string; name: string }[]
+        if (catData.length === 0) return
 
-        const cats: Category[] = catData.map((c: { id: string; name: string }) => ({ id: c.id, name: c.name }))
+        const cats: Category[] = catData.map(c => ({ id: c.id, name: c.name }))
         setCategories(cats)
         setActiveCategory(cats[0].id)
 
-        const catIds = cats.map(c => c.id)
-        const { data: menuData, error: menuError } = await supabase
-          .from('menus')
-          .select(`
-            id, category_id, name, description, base_price, image_url,
-            is_popular, is_recommended, is_new, is_sold_out, is_hidden, display_order,
-            menu_option_groups (
-              display_order,
-              option_groups (
-                id, name, is_required, is_multi, max_select, is_sold_out, is_hidden,
-                option_items ( id, name, extra_price, is_sold_out, is_hidden, display_order, max_quantity )
-              )
-            )
-          `)
-          .in('category_id', catIds)
-          .eq('is_hidden', false)
-          .order('display_order', { ascending: true })
-        if (menuError) throw menuError
-
-        setMenus((menuData ?? []).map(mapDbMenu))
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        setMenus(((board?.menus ?? []) as any[]).map(mapDbMenu))
       } catch {
         setFetchError(true)
       } finally {
@@ -482,9 +465,8 @@ function MenuPageInner() {
 
             {isNegativeBalance(account.balance) && (
               <p className="mt-3 pt-3 border-t border-[#F5C6C6] text-[12px] text-[#C92A2A] leading-relaxed">
-                선결제 금액이 모두 소진되었어요.<br />
-                빠른 시일 내에 충전해주세요.<br />
-                미정산 금액은 선포스가 도와드릴 수 없어요.
+                빠른 시일 내에 선결제 금액을 충전해주세요.<br />
+                미정산 금액에 대한 불이익이 발생할 수 있어요
               </p>
             )}
           </div>
@@ -580,7 +562,9 @@ function MenuPageInner() {
                   ampTrack('recent_menu_top_click', payload)
                 }
               }
-              router.push(`/menu?item=${menu.code}`)
+              // ?from= 은 상세 화면의 add_to_cart 가 "어느 목록에서 들어왔는지"를 알기 위한 것.
+              // 클릭 시점엔 아는 정보인데 상세는 오버레이라 컴포넌트가 달라서, URL 로 넘긴다.
+              router.push(`/menu?item=${menu.code}&from=recent`)
             }}
           />
         )}
@@ -617,7 +601,7 @@ function MenuPageInner() {
                         categoryClickCountRef.current = 0
                         track('menu_card_click', { menu_name: menu.name, menu_code: menu.code, scroll_pct: scrollPct, category_click_count: catClicks })
                         ampTrack('menu_card_click', { menu_name: menu.name, menu_code: menu.code, scroll_pct: scrollPct, category_click_count: catClicks })
-                        router.push(`/menu?item=${menu.code}`)
+                        router.push(`/menu?item=${menu.code}&from=list`)
                       }}
                     />
                   ))}
@@ -694,7 +678,15 @@ function MenuPageInner() {
           style={{ boxShadow: '0 -4px 20px rgba(0,0,0,0.08)' }}
         >
           <button
-            onClick={() => { track('cart_bar_click', { item_count: qty }); ampTrack('cart_bar_click', { item_count: qty }); router.push('/cart') }}
+            onClick={() => {
+              // 담긴 항목의 유입 경로 구성비를 같이 보낸다 — 담기→주문 기여도를 재려면
+              // 이 단계부터 경로가 안 끊겨야 한다
+              // item_count 는 이 이벤트에서 예전부터 **총 수량**(qty)이었다. 과거 데이터와
+              // 끊기지 않게 그 의미를 유지하고, breakdown 의 동명 필드(= 줄 수)는 덮어쓴다.
+              const p = { ...entrySourceBreakdown(cartItems), item_count: qty }
+              track('cart_bar_click', p); ampTrack('cart_bar_click', p)
+              router.push('/cart')
+            }}
             className="w-full py-[16px] bg-ink text-white rounded-xl font-bold text-[15px] flex items-center justify-between px-5"
           >
             <span className="bg-surface/20 rounded-lg px-2 py-0.5 text-[13px]">{qty}개</span>
@@ -842,7 +834,7 @@ function MenuPageInner() {
                               track('search_menu_click', sp)
                               ampTrack('search_menu_click', sp)
                               setSearchOpen(false)
-                              router.push(`/menu?item=${menu.code}`)
+                              router.push(`/menu?item=${menu.code}&from=search`)
                             }}
                           />
                         ))}
@@ -910,6 +902,7 @@ function MenuPageInner() {
         <OrdererSheet
           open={ordererSheet}
           accountCode={account.code}
+          pin={account.pin ?? ''}
           currentName={orderer || undefined}
           onClose={() => setOrdererSheet(false)}
           onPick={async m => {

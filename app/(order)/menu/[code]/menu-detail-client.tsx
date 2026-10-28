@@ -8,7 +8,7 @@ import { getSupabaseClient } from '@/lib/supabase/client'
 import { formatWon, calcSubtotal, isLowBalance, isNegativeBalance } from '@/lib/utils'
 import { track } from '@/lib/firebase'
 import { ampTrack } from '@/lib/amplitude'
-import type { Menu, SelectedOption } from '@/lib/types'
+import type { Menu, SelectedOption, EntrySource } from '@/lib/types'
 import OptionGroup from '@/components/menu/option-group'
 import MenuBadges from '@/components/menu/menu-badges'
 import { mapDbMenu } from '@/lib/mappers'
@@ -20,6 +20,15 @@ export default function MenuDetailClient({ code }: { code: string }) {
   const searchParams = useSearchParams()
   const pathname     = usePathname()
   const editCartId = searchParams.get('edit')   // 장바구니 수정 모드
+
+  // 이 상세 화면에 **어느 목록에서** 들어왔나 — recent(지난주문) / search(검색) / list(일반 메뉴판).
+  // 담기 이벤트에 실어야 "지난주문 클릭 → 담기"와 "메뉴판 클릭 → 담기"를 가를 수 있다.
+  // 이게 없던 동안은 Amplitude 퍼널의 '순서'로 추정할 수밖에 없었고,
+  // 중간에 다른 메뉴를 담아도 집계에 섞였다.
+  // 모르는 값이 URL 로 들어와도 집계가 오염되지 않도록 아는 값만 통과시킨다
+  const fromParam = searchParams.get('from')
+  const entrySource: EntrySource =
+    fromParam === 'recent' || fromParam === 'search' || fromParam === 'list' ? fromParam : 'direct'
 
   const account    = useSessionStore(s => s.account)
   const addItem    = useCartStore(s => s.addItem)
@@ -192,6 +201,7 @@ export default function MenuDetailClient({ code }: { code: string }) {
     // 히스토리가 없는 예외(주소로 바로 진입) — 하드 이동으로 확실히 빠져나간다
     const params = new URLSearchParams(searchParams.toString())
     params.delete('item')
+    params.delete('from')   // 상세를 닫으면 유입 경로도 같이 치운다 — 다음 진입에 묻어가면 안 된다
     const qs = params.toString()
     window.location.replace(qs ? `${pathname}?${qs}` : pathname)
   }
@@ -218,9 +228,9 @@ export default function MenuDetailClient({ code }: { code: string }) {
       updateItem(editCartId, qty, selectedOptions)
       router.push('/cart')
     } else {
-      addItem(menu.code, menu.name, menu.price, qty, selectedOptions, menu.imageUrl)
-      track('add_to_cart', { item_name: menu.name, price: menu.price, quantity: qty, value: subtotal, currency: 'KRW' })
-      ampTrack('add_to_cart', { menu_name: menu.name, price: menu.price, quantity: qty })
+      addItem(menu.code, menu.name, menu.price, qty, selectedOptions, menu.imageUrl, entrySource)
+      track('add_to_cart', { item_name: menu.name, price: menu.price, quantity: qty, value: subtotal, currency: 'KRW', entry_source: entrySource })
+      ampTrack('add_to_cart', { menu_name: menu.name, price: menu.price, quantity: qty, entry_source: entrySource })
       // ⚠️ router.refresh() 를 부르면 안 된다.
       //    이 사이트는 output:'export' 라 서버가 없고, refresh()는 가져올 RSC 페이로드가 없어
       //    결국 페이지를 통째로 리로드한다. 그런데 상세 화면은 별도 라우트가 아니라

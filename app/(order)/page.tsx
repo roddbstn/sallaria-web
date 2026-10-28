@@ -574,6 +574,7 @@ function HomePageInner() {
       <OrdererSheet
         open={sheetOpen}
         accountCode={pendingAccount?.code ?? ''}
+        pin={pendingAccount?.pin ?? ''}
         onPick={async m => {
           setSheetOpen(false)
           setOrderer(m.name)

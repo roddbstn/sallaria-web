@@ -2,7 +2,7 @@
 
 import { create } from 'zustand'
 import { persist, createJSONStorage } from 'zustand/middleware'
-import type { CartItem, SelectedOption, OrderMethod } from '@/lib/types'
+import type { CartItem, SelectedOption, OrderMethod, EntrySource } from '@/lib/types'
 import { calcSubtotal, generateCartId, DELIVERY_FEE } from '@/lib/utils'
 
 interface CartState {
@@ -20,7 +20,8 @@ interface CartState {
     basePrice: number,
     qty: number,
     selectedOptions: SelectedOption[],
-    imageUrl?: string
+    imageUrl?: string,
+    entrySource?: EntrySource
   ) => void
   updateItem: (cartId: string, qty: number, selectedOptions: SelectedOption[]) => void
   removeItem: (cartId: string) => void
@@ -47,7 +48,7 @@ export const useCartStore = create<CartState>()(
       deliveryLat: null,
       deliveryLng: null,
 
-      addItem: (menuCode, menuName, basePrice, qty, selectedOptions, imageUrl) => {
+      addItem: (menuCode, menuName, basePrice, qty, selectedOptions, imageUrl, entrySource) => {
         const item: CartItem = {
           cartId: generateCartId(),
           menuCode,
@@ -57,6 +58,7 @@ export const useCartStore = create<CartState>()(
           qty,
           selectedOptions,
           subtotal: calcSubtotal(basePrice, selectedOptions, qty),
+          entrySource,
         }
         const items = [...get().items, item]
         set({ items })

@@ -10,6 +10,7 @@ import { ampTrack } from '@/lib/amplitude'
 import type { CartItem } from '@/lib/types'
 import FeedbackModal from '@/components/feedback/feedback-modal'
 import LoadingTimer from '@/components/ui/loading-timer'
+import OtherStoreLeadButton from '@/components/OtherStoreLeadButton'
 
 type OrderResultStatus = 'pending' | 'accepted' | 'rejected'
 
@@ -34,7 +35,7 @@ export default function SuccessPage() {
 function SuccessPageInner() {
   const router = useRouter()
   const searchParams = useSearchParams()
-  const { account } = useSessionStore()
+  const { account, orderer } = useSessionStore()
 
   const [status,           setStatus]           = useState<OrderResultStatus>('pending')
   const [orderCode,        setOrderCode]         = useState<string | null>(null)
@@ -768,6 +769,24 @@ function SuccessPageInner() {
           주문 접수 후에는 취소 및 환불이 어려워요<br />
           문의는 매장으로 직접 연락해 주세요
         </p>
+
+        {/* ── 다른 선결제 가게 제보 (Figma 825:702) ──
+            자리를 여기로 잡은 이유는 sunpos-kakao 와 같다:
+            · 하단은 '네이버 리뷰' 고정 바가 이미 쓴다. 둘 다 고정으로 두면 화면 아래가
+              버튼 두 개로 막히고 **둘 다 약해진다.** 하나는 고정(리뷰), 하나는 본문(제보).
+            · 위 안내문("취소·환불이 어려워요")은 꼭 읽어야 하는 줄이라 그 **위**에
+              버튼을 두면 시선을 뺏는다. 주문 얘기를 안내문으로 닫고 구분선 뒤에서
+              다른 주제를 연다.
+            거래처 정보가 없으면(세션 끊김 등) 띄우지 않는다 — 제보를 보낼 근거가 없다. */}
+        {account?.code && (
+          <div className="mt-6 pt-5 border-t border-[#F2F2F2]">
+            <OtherStoreLeadButton
+              accountCode={account.code}
+              reporter={orderer}
+              onReported={() => { track('store_lead_submitted'); ampTrack('store_lead_submitted') }}
+            />
+          </div>
+        )}
       </div>
 
       {/* 네이버 리뷰 — 하단 스티키 플로팅 */}

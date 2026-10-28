@@ -7,7 +7,7 @@ import { useSessionStore } from '@/lib/store/session'
 import CartItemComponent from '@/components/cart/CartItem'
 import CartSummary from '@/components/cart/CartSummary'
 import ScreenHeader from '@/components/ui/screen-header'
-import { formatWon } from '@/lib/utils'
+import { formatWon, entrySourceBreakdown } from '@/lib/utils'
 import { track } from '@/lib/firebase'
 import { ampTrack } from '@/lib/amplitude'
 
@@ -28,8 +28,10 @@ export default function CartPage() {
 
   // 장바구니 진입 트래킹
   useEffect(() => {
-    track('cart_view', { item_count: items.length })
-    ampTrack('cart_view', { item_count: items.length })
+    // entrySourceBreakdown 이 item_count(= items.length)를 이미 포함한다
+    const p = entrySourceBreakdown(items)
+    track('cart_view', p)
+    ampTrack('cart_view', p)
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
@@ -37,8 +39,9 @@ export default function CartPage() {
 
   function handleConfirm() {
     if (isDisabled) return
-    track('cart_to_checkout', { item_count: items.length, total: totalAmount() })
-    ampTrack('cart_to_checkout', { item_count: items.length, total: totalAmount() })
+    const p = { total: totalAmount(), ...entrySourceBreakdown(items) }
+    track('cart_to_checkout', p)
+    ampTrack('cart_to_checkout', p)
     router.push('/checkout')
   }
 
