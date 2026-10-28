@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { searchPlaces, submitStoreLead, type PlaceResult } from '@/lib/store-leads'
 
-// "다른 가게도 선결제하고 계세요?" 하단 시트.
+// "다른 가게도 선결제하고 계세요?" 중앙 모달.
 //
 // 흐름은 한 화면이다 — 검색해서 고르거나, 없으면 직접 적는다.
 // 단계를 나누지 않은 이유: 제보는 호의로 하는 일이라 단계가 늘수록 그냥 닫는다.
@@ -97,10 +97,23 @@ export default function OtherStoreLeadSheet({
 
   const field = 'w-full h-[48px] px-4 rounded-xl border border-[#D7D7D7] text-[15px] text-[#1E1E1E] placeholder:text-[#C4C4C4] outline-none focus:border-[#1E1E1E] transition-colors'
 
+  // 중앙 모달이다(전엔 하단 시트였다).
+  //
+  // 모션(searchModalOpen)이 원래 scale(0)→scale(1) 팝이라 하단에서 올라오는 시트에는
+  // 애초에 안 맞았다 — 아래에 붙은 채로 커지기만 했다. 중앙이 그 모션의 자리다.
+  //
+  // 테두리·너비·배경은 이 앱의 다른 중앙 모달(feedback-modal · notice-modal)과 맞췄다.
+  // max-h 와 안쪽 스크롤은 남긴다 — 검색 결과가 길어질 수 있다.
+  // dvh 를 쓰는 이유: 입력창에 포커스가 가면 키보드가 올라와 화면이 줄어드는데,
+  // vh 로 두면 모달이 키보드 아래로 밀려 내려간다.
   return (
-    <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/40" onClick={onClose}>
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 px-4"
+      style={{ paddingTop: 'env(safe-area-inset-top)' }}
+      onClick={onClose}
+    >
       <div
-        className="w-full max-w-[430px] bg-white rounded-t-2xl flex flex-col max-h-[88dvh] overflow-hidden"
+        className="w-full max-w-[380px] bg-surface rounded-[24px] flex flex-col max-h-[80dvh] overflow-hidden"
         style={{ animation: 'searchModalOpen 0.28s cubic-bezier(0.34, 1.4, 0.64, 1)' }}
         onClick={e => e.stopPropagation()}
       >
